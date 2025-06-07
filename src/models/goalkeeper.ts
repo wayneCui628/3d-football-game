@@ -1,8 +1,17 @@
-import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js';
-import { SIZES, FIELD } from '../constants.js';
+import * as THREE from "three";
+import { SIZES, FIELD } from '@/stores/constants';
+
+interface SaveResult {
+    saved: boolean;
+    goalkeeperPosition?: THREE.Vector3;
+}
 
 export class Goalkeeper {
-    constructor(scene, goalLineZ) {
+    private scene: THREE.Scene;
+    private goalLineZ: number;
+    private group: THREE.Group;
+
+    constructor(scene: THREE.Scene, goalLineZ: number) {
         this.scene = scene;
         this.goalLineZ = goalLineZ;
         this.group = new THREE.Group();
@@ -10,7 +19,7 @@ export class Goalkeeper {
         this.scene.add(this.group);
     }
 
-    createGoalkeeper() {
+    private createGoalkeeper(): void {
         const gkMaterial = new THREE.MeshStandardMaterial({ 
             color: 0x4444EE, 
             roughness: 0.6 
@@ -57,12 +66,12 @@ export class Goalkeeper {
         this.reset();
     }
 
-    reset() {
+    public reset(): void {
         this.group.position.set(0, 0, this.goalLineZ - Math.sign(this.goalLineZ) * 0.8);
         this.group.lookAt(new THREE.Vector3(0, SIZES.PLAYER_HEIGHT / 2, 0));
     }
 
-    update(ballPosition, ballVelocity) {
+    public update(ballPosition: THREE.Vector3, ballVelocity: THREE.Vector3): void {
         if (ballVelocity.lengthSq() < 0.001) {
             // 球静止时，守门员做待机动作
             const idleMove = Math.sin(performance.now() * 0.0005) * (FIELD.GOAL_WIDTH * 0.15);
@@ -85,7 +94,7 @@ export class Goalkeeper {
         }
     }
 
-    checkSave(ballPosition, ballRadius) {
+    public checkSave(ballPosition: THREE.Vector3): SaveResult {
         const gkBodyPos = this.group.position.clone().add(this.group.children[0].position);
         const diveReach = SIZES.PLAYER_HEIGHT * 0.8;
         

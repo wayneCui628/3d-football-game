@@ -1,8 +1,18 @@
-import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js';
-import { SIZES, FIELD } from '../constants.js';
+import * as THREE from "three";
+import { SIZES } from '@/stores/constants';
+
+interface CollisionResult {
+    collided: boolean;
+    playerPosition?: THREE.Vector3;
+}
 
 export class Wall {
-    constructor(scene, ballPosition, targetGoalZ) {
+    private scene: THREE.Scene;
+    private ballPosition: THREE.Vector3;
+    private targetGoalZ: number;
+    private players: THREE.Group[];
+
+    constructor(scene: THREE.Scene, ballPosition: THREE.Vector3, targetGoalZ: number) {
         this.scene = scene;
         this.ballPosition = ballPosition;
         this.targetGoalZ = targetGoalZ;
@@ -10,16 +20,18 @@ export class Wall {
         this.createWall();
     }
 
-    createWall() {
+    private createWall(): void {
         // 移除现有人墙
         this.players.forEach(group => {
             group.traverse(child => {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(m => m.dispose());
-                    } else {
-                        child.material.dispose();
+                if (child instanceof THREE.Mesh) {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(m => m.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
                     }
                 }
             });
@@ -103,13 +115,13 @@ export class Wall {
         }
     }
 
-    checkCollision(ballPosition, ballRadius) {
+    public checkCollision(ballPosition: THREE.Vector3, ballRadius: number): CollisionResult {
         for (const playerGroup of this.players) {
-            const playerBody = playerGroup.children[0];
+            const playerBody = playerGroup.children[0] as THREE.Mesh;
             const playerPos = playerGroup.position.clone().add(playerBody.position);
             const distToPlayer = ballPosition.distanceTo(playerPos);
             
-            if (distToPlayer < ballRadius + playerBody.geometry.parameters.radiusTop) {
+            if (distToPlayer < ballRadius + (playerBody.geometry as THREE.CylinderGeometry).parameters.radiusTop) {
                 return {
                     collided: true,
                     playerPosition: playerPos
