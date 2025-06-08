@@ -8,7 +8,10 @@
 
       <!-- 力量条 -->
       <div class="power-meter">
-        <div class="power-fill"></div>
+        <div
+          class="power-fill"
+          :style="{ width: `${(power / CONTROLS.MAX_POWER) * 100}%` }"
+        ></div>
       </div>
 
       <!-- 弧线指示器 -->
@@ -49,7 +52,7 @@ import * as THREE from "three";
 import { CONTROLS, FIELD, PHYSICS, SIZES } from "@/stores/constants";
 import { Ball } from "@/models/ball";
 import { Player } from "@/models/player";
-import { Wall } from "@/models/wall";
+// import { Wall } from "@/models/wall";
 import { Goalkeeper } from "@/models/goalkeeper";
 import { Field } from "@/models/field";
 import PauseScreen from "@/components/PauseScreen.vue";
@@ -67,13 +70,12 @@ let camera: THREE.PerspectiveCamera;
 let renderer: THREE.WebGLRenderer;
 let ball: Ball;
 let player: Player;
-let wall: Wall;
+// let wall: Wall;
 let goalkeeper: Goalkeeper;
 
 const power = ref(0);
 const isCharging = ref(false);
-const shootDirection = new THREE.Vector3();
-const cameraRotation = ref({ x: Math.PI / 10, y: Math.PI });
+// const cameraRotation = ref({ x: Math.PI / 10, y: Math.PI });
 const isPaused = ref(false);
 let isPointerLocked = false;
 
@@ -85,6 +87,7 @@ let lastShotTime = 0;
 let powerChargeDirection = 1;
 let curveAmount = 0;
 
+let shootDirection = new THREE.Vector3();
 let cameraAzimuth = 0; // 摄像机水平方位角 (绕Y轴)
 let cameraElevation = Math.PI / 6; // 摄像机俯仰角 (初始向上看一点，例如30度)
 const cameraDistance = 5; // 摄像机与玩家的固定距离
@@ -92,6 +95,16 @@ const cameraTargetOffset = new THREE.Vector3(0, 1.5, 0); // 摄像机看向玩�
 const mouseSensitivity = 0.0025;
 const minElevation = -Math.PI / 12; // 最小俯仰角 (例如-60度)
 const maxElevation = (Math.PI / 3) * 0.9; // 最大俯仰角 (例如接近90度，但不完全是，防止万向节锁问题)
+
+const isSlowMotionActive = ref(false); // New state for slow motion
+const SLOW_MOTION_FACTOR = 0.5; // New constant for slowdown
+const BALL_FOLLOW_CAMERA_DISTANCE = 7; // Distance for camera when following ball
+
+let ballFollowAzimuth = 0; // 围绕球的水平角度
+let ballFollowElevation = Math.PI / 8; // 围绕球的垂直角度 (初始稍微抬高)
+const ballFollowMouseSensitivity = 0.0025; // 围绕球旋转时的鼠标灵敏度
+const minBallFollowElevation = -Math.PI / 3; // 最小仰角 (例如-60度)
+const maxBallFollowElevation = Math.PI / 2.5; // 最大仰角 (例如72度)
 
 const createScene = () => {
   scene = new THREE.Scene();
@@ -169,9 +182,9 @@ const createPlayer = () => {
   );
 };
 
-const createWall = () => {
-  wall = new Wall(scene, ball.getPosition(), -FIELD.LENGTH / 2);
-};
+// const createWall = () => {
+//   wall = new Wall(scene, ball.getPosition(), -FIELD.LENGTH / 2);
+// };
 
 const createGoalkeeper = () => {
   goalkeeper = new Goalkeeper(scene, -FIELD.LENGTH / 2);
@@ -207,16 +220,47 @@ const setupEventListeners = () => {
   window.addEventListener("resize", onWindowResize.bind(this));
 };
 
+// const onPointerMove = (event: MouseEvent) => {
+//   if (!gameStarted || !isPointerLocked) return;
+//   if (isCharging.value) {
+//     addCurve(event.movementX);
+//   } else {
+//     // 更新方位角和俯仰角
+//     cameraAzimuth -= event.movementX * mouseSensitivity;
+//     cameraElevation += event.movementY * mouseSensitivity;
+
+//     // 限制俯仰角
+//     cameraElevation = Math.max(
+//       minElevation,
+//       Math.min(maxElevation, cameraElevation)
+//     );
+//   }
+// };
+
 const onPointerMove = (event: MouseEvent) => {
   if (!gameStarted || !isPointerLocked) return;
-  if (isCharging.value) {
+
+  if (isSlowMotionActive.value) {
+    // 优先检查慢动作状态
+    ballFollowAzimuth -= event.movementX * ballFollowMouseSensitivity;
+    // 假设鼠标向上移动 (movementY < 0) 意味着视角抬高 (增加仰角)
+    // 这与你现有的 cameraElevation 逻辑可能需要统一
+    // 如果你现有的 cameraElevation 是 movementY > 0 视角抬高，则这里也用 +=
+    ballFollowElevation += event.movementY * ballFollowMouseSensitivity; // 尝试用减号，若反了则改为加号
+
+    // 限制仰角范围
+    ballFollowElevation = Math.max(
+      minBallFollowElevation,
+      Math.min(maxBallFollowElevation, ballFollowElevation)
+    );
+  } else if (isCharging.value) {
     addCurve(event.movementX);
   } else {
-    // 更新方位角和俯仰角
+    // 更新普通模式下的摄像机方位角和俯仰角 (跟随玩家时)
     cameraAzimuth -= event.movementX * mouseSensitivity;
-    cameraElevation += event.movementY * mouseSensitivity;
+    cameraElevation += event.movementY * mouseSensitivity; // 你原始代码是 +=
 
-    // 限制俯仰角
+    // 限制普通模式的俯仰角
     cameraElevation = Math.max(
       minElevation,
       Math.min(maxElevation, cameraElevation)
@@ -239,7 +283,6 @@ const onPointerLockChange = () => {
   if (!isPointerLocked && isCharging.value) {
     isCharging.value = false;
     power.value = 0;
-    updatePowerMeter();
     const curveIndicator = document.querySelector(
       ".curve-indicator"
     ) as HTMLElement;
@@ -259,7 +302,6 @@ const startCharging = () => {
     power.value = 0;
     powerChargeDirection = 1;
     curveAmount = 0;
-    updatePowerMeter();
     const curveValue = document.querySelector(".curve-value") as HTMLElement;
     if (curveValue) {
       curveValue.textContent = curveAmount.toFixed(1);
@@ -282,6 +324,101 @@ const addCurve = (movementX: number) => {
   }
 };
 
+// const shoot = () => {
+//   if (!isCharging.value) return;
+
+//   console.log("Shooting with power:", power.value);
+
+//   isCharging.value = false;
+//   shotsCount.value++;
+//   const shotsCountEl = document.getElementById("shots-count");
+//   if (shotsCountEl) {
+//     shotsCountEl.textContent = shotsCount.value.toString();
+//   }
+//   updateSuccessRate();
+//   const curveIndicator = document.querySelector(
+//     ".curve-indicator"
+//   ) as HTMLElement;
+//   if (curveIndicator) {
+//     curveIndicator.style.display = "none";
+//   }
+
+//   // camera.getWorldDirection(shootDirection);
+//   // ball.move(shootDirection, power.value, curveAmount);
+
+//   // animateShot();
+
+//   // 1. 基本信息
+//   const ballStartPosition = ball.getPosition();
+//   const cameraPosition = camera.position.clone();
+//   const aimRayDirection = new THREE.Vector3();
+//   camera.getWorldDirection(aimRayDirection);
+//   const targetSphereRadius = 25.0;
+//   const groundLevelY = 0.0; // 定义地面高度
+
+//   // 2. 创建射线和目标球面
+//   const aimRay = new THREE.Ray(cameraPosition, aimRayDirection);
+//   const targetSphere = new THREE.Sphere(ballStartPosition, targetSphereRadius);
+
+//   // 3. 计算射线与球面的交点
+//   const intersectionPoint = new THREE.Vector3();
+//   const intersects = aimRay.intersectSphere(targetSphere, intersectionPoint);
+
+//   let adjustedTargetPosition = new THREE.Vector3(); // 用于存储最终的目标点
+
+//   if (intersects) {
+//     adjustedTargetPosition.copy(intersectionPoint);
+
+//     // 4. 检查目标点是否在地面以下，如果是则调整
+//     if (adjustedTargetPosition.y < groundLevelY) {
+//       console.log("Original target below ground, adjusting to ground level.");
+//       adjustedTargetPosition.y = groundLevelY;
+//       // 可选：如果希望目标点至少是球的半径高，而不是完全贴地
+//       // adjustedTargetPosition.y = Math.max(groundLevelY, SIZES.BALL_RADIUS);
+//     }
+//   } else {
+//     // 射线与球面没有交点，使用回退策略
+//     console.warn(
+//       "Aim ray does not intersect the 25m target sphere. Using fallback target."
+//     );
+//     // 回退：从球出发，沿摄像机瞄准方向25米，然后调整Y到地面
+//     adjustedTargetPosition
+//       .copy(ballStartPosition)
+//       .add(aimRayDirection.clone().multiplyScalar(targetSphereRadius));
+//     if (adjustedTargetPosition.y < groundLevelY) {
+//       adjustedTargetPosition.y = groundLevelY;
+//     }
+//   }
+
+//   // 5. 计算从球指向调整后目标点的初始射门方向
+//   shootDirection.subVectors(adjustedTargetPosition, ballStartPosition);
+
+//   // 安全检查：如果调整后的目标点与球的起始位置重合（例如，球在地面，瞄准正下方25米，调整后目标点也在球的位置）
+//   // 这种情况下，射门方向会是零向量。我们需要一个默认方向。
+//   if (shootDirection.lengthSq() < 0.0001) {
+//     console.warn(
+//       "Adjusted target is too close to ball start position. Using camera aim direction as fallback."
+//     );
+//     shootDirection.copy(aimRayDirection); // 直接使用摄像机瞄准方向
+//     // 确保这个方向至少是水平的，如果它也指向地下
+//     if (shootDirection.y < 0) {
+//       shootDirection.y = 0; // 将Y分量设为0，使其水平
+//       shootDirection.normalize(); // 重新归一化
+//       if (shootDirection.lengthSq() < 0.0001) {
+//         // 如果归一化后还是零向量（说明原始aimRayDirection是纯粹的(0,-1,0)）
+//         shootDirection.set(0, 0, -1); // 给一个默认的向前方向
+//       }
+//     }
+//   } else {
+//     shootDirection.normalize(); // 归一化得到单位方向向量
+//   }
+
+//   // 6. 应用到球 (不进行弹道仰角补偿)
+//   ball.move(shootDirection, power.value, curveAmount);
+
+//   animateShot();
+// };
+
 const shoot = () => {
   if (!isCharging.value) return;
 
@@ -301,18 +438,165 @@ const shoot = () => {
     curveIndicator.style.display = "none";
   }
 
-  camera.getWorldDirection(shootDirection);
+  const ballStartPosition = ball.getPosition();
+  // ... (射线计算和射门方向的逻辑保持不变) ...
+  const cameraPositionForShot = camera.position.clone(); // 保存射门瞬间的相机位置
+  const aimRayDirection = new THREE.Vector3();
+  camera.getWorldDirection(aimRayDirection);
+  const targetSphereRadius = 25.0;
+  const groundLevelY = 0.0;
+
+  const aimRay = new THREE.Ray(cameraPositionForShot, aimRayDirection);
+  const targetSphere = new THREE.Sphere(ballStartPosition, targetSphereRadius);
+  const intersectionPoint = new THREE.Vector3();
+  const intersects = aimRay.intersectSphere(targetSphere, intersectionPoint);
+  let adjustedTargetPosition = new THREE.Vector3();
+
+  if (intersects) {
+    adjustedTargetPosition.copy(intersectionPoint);
+    if (adjustedTargetPosition.y < groundLevelY) {
+      adjustedTargetPosition.y = groundLevelY;
+    }
+  } else {
+    console.warn(
+      "Aim ray does not intersect the 25m target sphere. Using fallback target."
+    );
+    adjustedTargetPosition
+      .copy(ballStartPosition)
+      .add(aimRayDirection.clone().multiplyScalar(targetSphereRadius));
+    if (adjustedTargetPosition.y < groundLevelY) {
+      adjustedTargetPosition.y = groundLevelY;
+    }
+  }
+
+  shootDirection.subVectors(adjustedTargetPosition, ballStartPosition);
+
+  if (shootDirection.lengthSq() < 0.0001) {
+    console.warn(
+      "Adjusted target is too close to ball start position. Using camera aim direction as fallback."
+    );
+    shootDirection.copy(aimRayDirection);
+    if (shootDirection.y < 0) {
+      shootDirection.y = 0;
+      shootDirection.normalize();
+      if (shootDirection.lengthSq() < 0.0001) {
+        shootDirection.set(0, 0, -1);
+      }
+    }
+  } else {
+    shootDirection.normalize();
+  }
+
   ball.move(shootDirection, power.value, curveAmount);
+
+  // 激活慢动作
+  isSlowMotionActive.value = true;
+
+  // 初始化球体跟踪摄像机的角度，以实现平滑过渡
+  if (ball && camera) {
+    const currentBallPos = ball.getPosition();
+    // 使用射门瞬间的相机位置 (cameraPositionForShot) 而不是 camera.position，因为后者可能在 lerp 中变化
+    const offsetVector = new THREE.Vector3().subVectors(
+      cameraPositionForShot,
+      currentBallPos
+    );
+
+    const distanceToBall = offsetVector.length();
+
+    if (distanceToBall > 0.01) {
+      // 避免除以零
+      // 计算仰角：Y分量 / 实际距离
+      ballFollowElevation = Math.asin(offsetVector.y / distanceToBall);
+      // 计算方位角：atan2(X分量, Z分量)
+      // 这使得方位角=0时，摄像机在球的+Z方向（如果球门在-Z，则是在球的后方）
+      ballFollowAzimuth = Math.atan2(offsetVector.x, offsetVector.z);
+    } else {
+      // 如果摄像机和球几乎在同一点，则使用默认值
+      ballFollowAzimuth = 0; // 默认在球的正后方（假设球朝-Z运动）
+      ballFollowElevation = Math.PI / 6; // 默认仰角30度
+    }
+
+    // 确保初始仰角在允许范围内
+    ballFollowElevation = Math.max(
+      minBallFollowElevation,
+      Math.min(maxBallFollowElevation, ballFollowElevation)
+    );
+  } else {
+    // 备用初始化 (理论上不应发生)
+    ballFollowAzimuth = 0;
+    ballFollowElevation = Math.PI / 8;
+  }
 
   animateShot();
 };
+// const animateShot = () => {
+//   let prevTime = performance.now();
+
+//   const shotLoop = (currentTime) => {
+//     animationFrameId = requestAnimationFrame(shotLoop);
+//     const deltaTime = Math.min(0.033, (currentTime - prevTime) / 1000);
+//     prevTime = currentTime;
+
+//     if (
+//       ball.getVelocity().lengthSq() < 0.001 &&
+//       ball.getPosition().y <= SIZES.BALL_RADIUS + 0.01
+//     ) {
+//       ball.stop();
+//       if (!checkGoal()) showResult("未进球");
+//       setTimeout(() => resetBallAndPlayer(), 1500);
+//       cancelAnimationFrame(animationFrameId);
+//       animationFrameId = null;
+//       return;
+//     }
+
+//     // 物理更新
+//     ball.update(deltaTime);
+
+//     // 碰撞检测
+//     checkCollisions();
+
+//     // 检查进球
+//     if (checkGoal()) {
+//       showResult("进球！GOAL!");
+//       goalsCount.value++;
+//       document.getElementById("goals-count").textContent =
+//         goalsCount.value.toString();
+//       updateSuccessRate();
+//       setTimeout(() => resetBallAndPlayer(), 1500);
+//       cancelAnimationFrame(animationFrameId);
+//       animationFrameId = null;
+//       return;
+//     }
+
+//     // 检查出界
+//     if (checkOutOfBounds(currentTime)) {
+//       if (!checkGoal()) showResult("未进球");
+//       setTimeout(() => resetBallAndPlayer(), 1500);
+//       cancelAnimationFrame(animationFrameId);
+//       animationFrameId = null;
+//       return;
+//     }
+//   };
+
+//   lastShotTime = performance.now();
+//   if (animationFrameId) cancelAnimationFrame(animationFrameId);
+//   shotLoop(lastShotTime);
+// };
 
 const animateShot = () => {
   let prevTime = performance.now();
 
-  const shotLoop = (currentTime) => {
+  const shotLoop = (currentTime: number) => {
     animationFrameId = requestAnimationFrame(shotLoop);
-    const deltaTime = Math.min(0.033, (currentTime - prevTime) / 1000);
+
+    let deltaTime = (currentTime - prevTime) / 1000;
+    // Clamp deltaTime to avoid large jumps if tab was inactive or performance issues
+    deltaTime = Math.min(deltaTime, 0.05); // e.g., max step of 50ms (20 FPS min for physics)
+
+    // Apply slow motion factor if active
+    if (isSlowMotionActive.value) {
+      deltaTime *= SLOW_MOTION_FACTOR;
+    }
     prevTime = currentTime;
 
     if (
@@ -322,35 +606,32 @@ const animateShot = () => {
       ball.stop();
       if (!checkGoal()) showResult("未进球");
       setTimeout(() => resetBallAndPlayer(), 1500);
-      cancelAnimationFrame(animationFrameId);
+      cancelAnimationFrame(animationFrameId as number);
       animationFrameId = null;
       return;
     }
 
-    // 物理更新
-    ball.update(deltaTime);
-
-    // 碰撞检测
+    ball.update(deltaTime); // Pass potentially slowed deltaTime
     checkCollisions();
 
-    // 检查进球
     if (checkGoal()) {
       showResult("进球！GOAL!");
       goalsCount.value++;
-      document.getElementById("goals-count").textContent =
-        goalsCount.value.toString();
+      const goalsCountEl = document.getElementById("goals-count");
+      if (goalsCountEl) {
+        goalsCountEl.textContent = goalsCount.value.toString();
+      }
       updateSuccessRate();
       setTimeout(() => resetBallAndPlayer(), 1500);
-      cancelAnimationFrame(animationFrameId);
+      cancelAnimationFrame(animationFrameId as number);
       animationFrameId = null;
       return;
     }
 
-    // 检查出界
     if (checkOutOfBounds(currentTime)) {
       if (!checkGoal()) showResult("未进球");
       setTimeout(() => resetBallAndPlayer(), 1500);
-      cancelAnimationFrame(animationFrameId);
+      cancelAnimationFrame(animationFrameId as number);
       animationFrameId = null;
       return;
     }
@@ -363,27 +644,27 @@ const animateShot = () => {
 
 const checkCollisions = () => {
   // 人墙碰撞
-  const wallCollision = wall.checkCollision(
-    ball.getPosition(),
-    SIZES.BALL_RADIUS
-  );
-  if (wallCollision.collided) {
-    const reflectDir = ball
-      .getPosition()
-      .clone()
-      .sub(wallCollision.playerPosition)
-      .normalize();
-    const speedBeforeHit = ball.getVelocity().length();
-    ball.move(reflectDir, speedBeforeHit * PHYSICS.RESTITUTION_COEFFICIENT);
-    console.log(
-      "人墙碰撞:",
-      wallCollision.playerPosition,
-      speedBeforeHit,
-      speedBeforeHit * PHYSICS.RESTITUTION_COEFFICIENT
-    );
-    showResult("击中人墙!");
-    return;
-  }
+  // const wallCollision = wall.checkCollision(
+  //   ball.getPosition(),
+  //   SIZES.BALL_RADIUS
+  // );
+  // if (wallCollision.collided) {
+  //   const reflectDir = ball
+  //     .getPosition()
+  //     .clone()
+  //     .sub(wallCollision.playerPosition)
+  //     .normalize();
+  //   const speedBeforeHit = ball.getVelocity().length();
+  //   ball.move(reflectDir, speedBeforeHit * PHYSICS.RESTITUTION_COEFFICIENT);
+  //   console.log(
+  //     "人墙碰撞:",
+  //     wallCollision.playerPosition,
+  //     speedBeforeHit,
+  //     speedBeforeHit * PHYSICS.RESTITUTION_COEFFICIENT
+  //   );
+  //   showResult("击中人墙!");
+  //   return;
+  // }
 
   // 守门员扑救
   const saveResult = goalkeeper.checkSave(ball.getPosition());
@@ -403,12 +684,8 @@ const checkCollisions = () => {
   checkGoalpostCollision();
 };
 
-// 假设 Ball 类有一个直接设置速度的方法，或者 getVelocity() 返回的是引用（不推荐）
-// 更好的方式是在 Ball 类内部提供一个方法来应用碰撞效果
-// 例如：ball.applyCollisionResponse(normal, restitutionCoefficient);
-
 const checkGoalpostCollision = () => {
-  const ballMesh = ball.getMesh(); // 直接操作球的 Mesh 对象以获取和设置位置
+  const ballPosition = ball.getPosition();
   const currentBallVelocity = ball.getVelocity(); // 获取球的当前速度向量 (假设是克隆)
   let newVelocity = currentBallVelocity.clone(); // 用于计算新的速度
   let collisionOccurred = false;
@@ -418,19 +695,17 @@ const checkGoalpostCollision = () => {
 
   // 优化：只在球大致在球门区域内才进行详细检测
   if (
-    Math.abs(ballMesh.position.x) >
+    Math.abs(ballPosition.x) >
       FIELD.GOAL_WIDTH / 2 + SIZES.BALL_RADIUS + postCheckBuffer ||
-    Math.abs(ballMesh.position.z - goalLineZ) >
+    Math.abs(ballPosition.z - goalLineZ) >
       FIELD.GOAL_DEPTH + SIZES.BALL_RADIUS + postCheckBuffer || // FIELD.GOAL_DEPTH 应该是门柱的厚度或一个小的Z范围
-    ballMesh.position.y >
-      FIELD.GOAL_HEIGHT + SIZES.BALL_RADIUS + postCheckBuffer ||
-    ballMesh.position.y < -SIZES.BALL_RADIUS - postCheckBuffer // 考虑球可能从地面以下过来（虽然不太可能）
+    ballPosition.y > FIELD.GOAL_HEIGHT + SIZES.BALL_RADIUS + postCheckBuffer ||
+    ballPosition.y < -SIZES.BALL_RADIUS - postCheckBuffer // 考虑球可能从地面以下过来（虽然不太可能）
   ) {
     return; // 球离球门太远
   }
 
-  const postRadius = 0.06; // 门柱半径
-  const combinedRadius = SIZES.BALL_RADIUS + postRadius;
+  const combinedRadius = SIZES.BALL_RADIUS + FIELD.POST_RADIUS;
 
   // --- 立柱检测 ---
   const posts = [
@@ -441,24 +716,23 @@ const checkGoalpostCollision = () => {
   for (const post of posts) {
     // 检查Y方向是否在门柱高度范围内
     if (
-      ballMesh.position.y < FIELD.GOAL_HEIGHT + postRadius &&
-      ballMesh.position.y > -postRadius
+      ballPosition.y <= FIELD.GOAL_HEIGHT + SIZES.BALL_RADIUS &&
+      ballPosition.y >= 0
     ) {
       // 计算球心到门柱中心在XZ平面的距离
       const distSqXZ =
-        (ballMesh.position.x - post.x) ** 2 +
-        (ballMesh.position.z - goalLineZ) ** 2;
+        (ballPosition.x - post.x) ** 2 + (ballPosition.z - goalLineZ) ** 2;
 
-      if (distSqXZ < combinedRadius ** 2) {
+      if (distSqXZ <= combinedRadius ** 2) {
         collisionOccurred = true;
         showResult(`中${post.name}!`);
 
         // 1. 计算碰撞点法线 (近似)
         //    从门柱中心指向球心的向量 (只考虑XZ平面)
         const normal = new THREE.Vector3(
-          ballMesh.position.x - post.x,
+          ballPosition.x - post.x,
           0,
-          ballMesh.position.z - goalLineZ
+          ballPosition.z - goalLineZ
         ).normalize();
 
         // 2. 计算反射速度 (v' = v - 2 * dot(v, n) * n)
@@ -471,23 +745,22 @@ const checkGoalpostCollision = () => {
         // 3. 将球移出碰撞体
         //    沿着法线方向将球推到刚好不碰撞的位置
         const penetrationDepth = combinedRadius - Math.sqrt(distSqXZ);
-        ballMesh.position.add(
-          normal.clone().multiplyScalar(penetrationDepth + 0.001)
-        ); // 加一点点buffer
-
-        console.log(
-          `${post.name}碰撞:`,
-          ballMesh.position,
-          newVelocity.length()
+        ball.updatePosition(
+          ballPosition.add(
+            normal.clone().multiplyScalar(penetrationDepth + 0.001)
+          )
         );
+
         break; // 一次只处理一次碰撞
       }
     }
   }
 
   if (collisionOccurred) {
-    ball.move(newVelocity, newVelocity.length()); // 假设 Ball 类有 setVelocity 方法
-    return; // 如果撞到立柱，不再检测横梁（简化处理）
+    const finalPower = newVelocity.length(); // 碰撞后的速度大小
+    const finalDirection = newVelocity.clone().normalize(); // 碰撞后的速度方向 (单位向量)
+    ball.move(finalDirection, finalPower);
+    return;
   }
 
   // --- 横梁检测 ---
@@ -495,24 +768,22 @@ const checkGoalpostCollision = () => {
   // 横梁可以看作一个沿X轴的圆柱体或长方体
   // 简化检测：先看X, Z是否在范围内，再看Y是否碰撞
   if (
-    Math.abs(ballMesh.position.x) < FIELD.GOAL_WIDTH / 2 - postRadius && // 在两个立柱之间
-    Math.abs(ballMesh.position.z - goalLineZ) < SIZES.BALL_RADIUS + postRadius // Z方向上接近横梁
+    Math.abs(ballPosition.x) < FIELD.GOAL_WIDTH / 2 - FIELD.POST_RADIUS && // 在两个立柱之间
+    Math.abs(ballPosition.z - goalLineZ) < SIZES.BALL_RADIUS + FIELD.POST_RADIUS // Z方向上接近横梁
   ) {
-    if (
-      Math.abs(ballMesh.position.y - FIELD.GOAL_HEIGHT) <
-      SIZES.BALL_RADIUS + postRadius
-    ) {
+    const distSqYZ =
+      (ballPosition.y - FIELD.GOAL_HEIGHT) ** 2 +
+      (ballPosition.z - goalLineZ) ** 2;
+    if (distSqYZ <= combinedRadius ** 2) {
       collisionOccurred = true;
       showResult("中楣!");
 
       // 1. 计算碰撞点法线 (近似)
-      //    如果球从下方撞击横梁，法线向上 (0, 1, 0)
-      //    如果球从上方撞击横梁（不太可能，除非大力射门后下坠），法线向下 (0, -1, 0)
       const normal = new THREE.Vector3(
         0,
-        ballMesh.position.y > FIELD.GOAL_HEIGHT ? -1 : 1,
-        0
-      );
+        ballPosition.y - FIELD.GOAL_HEIGHT,
+        ballPosition.z - goalLineZ
+      ).normalize();
 
       // 2. 计算反射速度
       const dot = currentBallVelocity.dot(normal);
@@ -520,102 +791,28 @@ const checkGoalpostCollision = () => {
       newVelocity
         .sub(reflection)
         .multiplyScalar(PHYSICS.POST_RESTITUTION_COEFFICIENT);
-      // 特别地，对于横梁，主要反弹Y，可以简化为：
-      // newVelocity.y *= -PHYSICS.POST_RESTITUTION_COEFFICIENT;
-      // newVelocity.x *= PHYSICS.POST_FRICTION; // 横梁也可能有摩擦
-      // newVelocity.z *= PHYSICS.POST_FRICTION;
 
       // 3. 将球移出碰撞体
-      const penetrationDepth =
-        SIZES.BALL_RADIUS +
-        postRadius -
-        Math.abs(ballMesh.position.y - FIELD.GOAL_HEIGHT);
-      ballMesh.position.add(
+      const penetrationDepth = combinedRadius - Math.sqrt(distSqYZ);
+      const newBallPosition = ballPosition.add(
         normal.clone().multiplyScalar(penetrationDepth + 0.001)
       );
-
-      console.log("横梁碰撞:", ballMesh.position, newVelocity.length());
+      ball.updatePosition(newBallPosition);
     }
   }
 
   if (collisionOccurred) {
-    ball.move(newVelocity, newVelocity.length()); // 假设 Ball 类有 setVelocity 方法
+    const finalPower = newVelocity.length();
+    const finalDirection = newVelocity.clone().normalize();
+    console.log("横梁碰撞后方向和速度:", finalDirection, finalPower);
+    ball.move(finalDirection, finalPower);
   }
 };
-
-// const checkGoalpostCollision = () => {
-//   const postCheckBuffer = SIZES.BALL_RADIUS * 2;
-//   const nearGoalLineZ =
-//     ball.getPosition().z < -FIELD.LENGTH / 2 + postCheckBuffer &&
-//     ball.getPosition().z >
-//       -FIELD.LENGTH / 2 - FIELD.GOAL_DEPTH - postCheckBuffer;
-
-//   if (nearGoalLineZ) {
-//     const postRadius = 0.06;
-
-//     // 左门柱
-//     if (
-//       Math.hypot(
-//         ball.getPosition().x - -FIELD.GOAL_WIDTH / 2,
-//         ball.getPosition().z - -FIELD.LENGTH / 2
-//       ) <
-//         SIZES.BALL_RADIUS + postRadius &&
-//       ball.getPosition().y < FIELD.GOAL_HEIGHT + postRadius &&
-//       ball.getPosition().y > -postRadius
-//     ) {
-//       const ballVelocity = ball.getVelocity();
-//       ballVelocity.z *= -PHYSICS.POST_RESTITUTION_COEFFICIENT;
-//       // ballVelocity.x *= Math.random() * 0.5 - 0.25;
-//       // ballVelocity.y *= Math.random() * 0.5 + 0.5; // 增加Y轴速度的随机性
-//       ball.move(ballVelocity.normalize(), ballVelocity.length());
-//       showResult("中柱!");
-//     }
-
-//     // 右门柱
-//     if (
-//       Math.hypot(
-//         ball.getPosition().x - FIELD.GOAL_WIDTH / 2,
-//         ball.getPosition().z - -FIELD.LENGTH / 2
-//       ) <
-//         SIZES.BALL_RADIUS + postRadius &&
-//       ball.getPosition().y < FIELD.GOAL_HEIGHT + postRadius &&
-//       ball.getPosition().y > -postRadius
-//     ) {
-//       const ballVelocity = ball.getVelocity();
-//       ballVelocity.z *= -PHYSICS.POST_RESTITUTION_COEFFICIENT;
-//       // ballVelocity.x *= Math.random() * 0.5 - 0.25;
-//       // ballVelocity.y *= Math.random() * 0.5 + 0.5; // 增加Y轴速度的随机性
-//       console.log(
-//         "右门柱碰撞:",
-//         ball.getPosition(),
-//         ballVelocity.length(),
-//         PHYSICS.POST_RESTITUTION_COEFFICIENT
-//       );
-//       ball.move(ballVelocity.normalize(), ballVelocity.length());
-//       showResult("中柱!");
-//     }
-
-//     // 横梁
-//     if (
-//       Math.abs(ball.getPosition().y - FIELD.GOAL_HEIGHT) <
-//         SIZES.BALL_RADIUS + postRadius &&
-//       Math.abs(ball.getPosition().x) < FIELD.GOAL_WIDTH / 2 &&
-//       Math.abs(ball.getPosition().z - -FIELD.LENGTH / 2) < postRadius * 2
-//     ) {
-//       const ballVelocity = ball.getVelocity();
-//       ballVelocity.z *= -PHYSICS.POST_RESTITUTION_COEFFICIENT;
-//       // ballVelocity.x *= Math.random() * 0.5 - 0.25;
-//       // ballVelocity.y *= Math.random() * 0.5 + 0.5; // 增加Y轴速度的随机性
-//       ball.move(ballVelocity.normalize(), ballVelocity.length());
-//       showResult("中楣!");
-//     }
-//   }
-// };
 
 const checkGoal = () => {
   const goalLine = -FIELD.LENGTH / 2;
   const inGoalPlane =
-    ball.getPosition().z < goalLine + SIZES.BALL_RADIUS &&
+    ball.getPosition().z < goalLine - SIZES.BALL_RADIUS &&
     ball.getPosition().z > goalLine - FIELD.GOAL_DEPTH - SIZES.BALL_RADIUS;
 
   return (
@@ -630,23 +827,62 @@ const checkOutOfBounds = (currentTime) => {
   if (currentTime - lastShotTime <= 500) return false;
 
   const goalLineToCheck = -FIELD.LENGTH / 2;
-  const behindGoal =
-    ball.getPosition().z <
-    goalLineToCheck - FIELD.GOAL_DEPTH - SIZES.BALL_RADIUS;
+  const behindGoal = ball.getPosition().z < goalLineToCheck - SIZES.BALL_RADIUS;
   const sideOut =
     Math.abs(ball.getPosition().x) > FIELD.WIDTH / 2 + SIZES.BALL_RADIUS;
-  const tooHighAndPast =
-    ball.getPosition().y > FIELD.GOAL_HEIGHT + 5 &&
-    Math.abs(ball.getPosition().z) > Math.abs(goalLineToCheck);
+  // const tooHighAndPast =
+  //   ball.getPosition().y > FIELD.GOAL_HEIGHT + 5 &&
+  //   Math.abs(ball.getPosition().z) > Math.abs(goalLineToCheck);
 
-  return behindGoal || sideOut || tooHighAndPast;
+  return behindGoal || sideOut /* || tooHighAndPast */;
 };
+
+// const resetBallAndPlayer = (initialPosition: THREE.Vector3 | null = null) => {
+//   if (animationFrameId) {
+//     cancelAnimationFrame(animationFrameId);
+//     animationFrameId = null;
+//   }
+
+//   if (initialPosition) {
+//     ball.stop();
+//     ball.getPosition().copy(initialPosition);
+//   } else {
+//     ball.reset();
+//   }
+
+//   if (player) {
+//     player.reset();
+//   }
+
+//   cameraRotation.value.y = Math.PI;
+//   cameraRotation.value.x = Math.PI / 10;
+
+//   power.value = 0;
+//   curveAmount = 0;
+//   isCharging.value = false;
+//   const curveValue = document.querySelector(".curve-value") as HTMLElement;
+//   if (curveValue) {
+//     curveValue.textContent = "0.0";
+//   }
+//   const curveIndicator = document.querySelector(
+//     ".curve-indicator"
+//   ) as HTMLElement;
+//   if (curveIndicator) {
+//     curveIndicator.style.display = "none";
+//   }
+
+//   updateCamera();
+//   // createWall();
+// };
 
 const resetBallAndPlayer = (initialPosition: THREE.Vector3 | null = null) => {
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
+
+  // Deactivate slow motion HERE
+  isSlowMotionActive.value = false;
 
   if (initialPosition) {
     ball.stop();
@@ -659,13 +895,15 @@ const resetBallAndPlayer = (initialPosition: THREE.Vector3 | null = null) => {
     player.reset();
   }
 
-  cameraRotation.value.y = Math.PI;
-  cameraRotation.value.x = Math.PI / 10;
+  // Reset camera aiming angles, not full rotation object
+  cameraAzimuth = 0; // Reset horizontal aim to forward
+  cameraElevation = Math.PI / 6; // Reset vertical aim to default
+  // cameraRotation.value.y = Math.PI; // This might not be needed if using azimuth/elevation correctly
+  // cameraRotation.value.x = Math.PI / 10;
 
   power.value = 0;
   curveAmount = 0;
   isCharging.value = false;
-  updatePowerMeter();
   const curveValue = document.querySelector(".curve-value") as HTMLElement;
   if (curveValue) {
     curveValue.textContent = "0.0";
@@ -677,40 +915,101 @@ const resetBallAndPlayer = (initialPosition: THREE.Vector3 | null = null) => {
     curveIndicator.style.display = "none";
   }
 
-  updateCamera();
-  createWall();
+  updateCamera(); // Ensure camera updates to new player position
+  // createWall();
 };
+
+// const updateCamera = () => {
+//   if (!player || !camera) return;
+
+//   // 获取玩家的当前世界位置
+//   const playerPosition = player.getGroup().position.clone(); // 或者 player.position 如果 player 就是 Object3D
+//   const offsetX =
+//     cameraDistance * Math.cos(cameraElevation) * Math.sin(cameraAzimuth);
+//   const offsetY = cameraDistance * Math.sin(cameraElevation);
+//   const offsetZ =
+//     cameraDistance * Math.cos(cameraElevation) * Math.cos(cameraAzimuth);
+
+//   // 摄像机的理想位置 = 玩家位置 + 计算出的偏移量
+//   const cameraIdealPosition = new THREE.Vector3(
+//     playerPosition.x + offsetX,
+//     playerPosition.y + offsetY + cameraTargetOffset.y, // 考虑目标偏移的Y分量，让摄像机高度基于玩家目标点
+//     playerPosition.z + offsetZ
+//   );
+
+//   // (可选) 平滑过渡摄像机位置，防止抖动
+//   camera.position.lerp(cameraIdealPosition, 0.1); // 0.1 是插值因子，值越小越平滑但延迟越高
+//   camera.position.copy(cameraIdealPosition); // 直接设置位置
+
+//   const lookAtPosition = ball.getPosition().clone().add(cameraTargetOffset);
+//   camera.lookAt(lookAtPosition);
+// };
 
 const updateCamera = () => {
-  if (!player || !camera) return;
+  if (!camera) return;
 
-  // 获取玩家的当前世界位置
-  const playerPosition = player.getGroup().position.clone(); // 或者 player.position 如果 player 就是 Object3D
-  const offsetX =
-    cameraDistance * Math.cos(cameraElevation) * Math.sin(cameraAzimuth);
-  const offsetY = cameraDistance * Math.sin(cameraElevation);
-  const offsetZ =
-    cameraDistance * Math.cos(cameraElevation) * Math.cos(cameraAzimuth);
+  if (
+    isSlowMotionActive.value &&
+    ball &&
+    (ball.isMoving() || animationFrameId !== null)
+  ) {
+    // 保持跟踪直到动画结束
+    // --- 慢动作: 摄像机围绕球体旋转 ---
+    const ballPosition = ball.getPosition();
 
-  // 摄像机的理想位置 = 玩家位置 + 计算出的偏移量
-  const cameraIdealPosition = new THREE.Vector3(
-    playerPosition.x + offsetX,
-    playerPosition.y + offsetY + cameraTargetOffset.y, // 考虑目标偏移的Y分量，让摄像机高度基于玩家目标点
-    playerPosition.z + offsetZ
-  );
+    // 根据方位角、仰角和距离计算摄像机的偏移量
+    // x = r * cos(elevation) * sin(azimuth)
+    // y = r * sin(elevation)
+    // z = r * cos(elevation) * cos(azimuth)
+    const offsetX =
+      BALL_FOLLOW_CAMERA_DISTANCE *
+      Math.cos(ballFollowElevation) *
+      Math.sin(ballFollowAzimuth);
+    const offsetY = BALL_FOLLOW_CAMERA_DISTANCE * Math.sin(ballFollowElevation);
+    const offsetZ =
+      BALL_FOLLOW_CAMERA_DISTANCE *
+      Math.cos(ballFollowElevation) *
+      Math.cos(ballFollowAzimuth);
 
-  // (可选) 平滑过渡摄像机位置，防止抖动
-  camera.position.lerp(cameraIdealPosition, 0.1); // 0.1 是插值因子，值越小越平滑但延迟越高
-  camera.position.copy(cameraIdealPosition); // 直接设置位置
+    // 目标摄像机位置 = 球的位置 + 偏移量
+    const targetCameraPosition = new THREE.Vector3(
+      ballPosition.x + offsetX,
+      ballPosition.y + offsetY, // Y轴直接使用计算出的偏移
+      ballPosition.z + offsetZ
+    );
 
-  const lookAtPosition = ball.getPosition().clone().add(cameraTargetOffset);
-  camera.lookAt(lookAtPosition);
-};
+    // 确保摄像机不会低于某个最小高度 (例如，略高于地面)
+    // SIZES.BALL_RADIUS 可能指的是球心到地面的距离，所以相机最低点可以设置为这个值或稍小一点的值。
+    targetCameraPosition.y = Math.max(
+      targetCameraPosition.y,
+      SIZES.BALL_RADIUS * 0.5
+    ); // 调整这个0.5因子，或者设为固定值如0.2
 
-const updatePowerMeter = () => {
-  const powerFill = document.querySelector(".power-fill") as HTMLElement;
-  if (powerFill) {
-    powerFill.style.width = `${(power.value / CONTROLS.MAX_POWER) * 100}%`;
+    // 平滑地移动摄像机到目标位置
+    camera.position.lerp(targetCameraPosition, 0.12); // 可以调整 0.12 这个插值因子
+
+    // 让摄像机始终朝向球心
+    camera.lookAt(ballPosition);
+  } else if (player) {
+    // --- 正常状态: 摄像机跟随玩家 (您原有的逻辑) ---
+    const playerPosition = player.getGroup().position.clone();
+    const offsetX =
+      cameraDistance * Math.cos(cameraElevation) * Math.sin(cameraAzimuth);
+    const offsetY = cameraDistance * Math.sin(cameraElevation);
+    const offsetZ =
+      cameraDistance * Math.cos(cameraElevation) * Math.cos(cameraAzimuth);
+
+    const cameraIdealPosition = new THREE.Vector3(
+      playerPosition.x + offsetX,
+      playerPosition.y + offsetY + cameraTargetOffset.y,
+      playerPosition.z + offsetZ
+    );
+
+    camera.position.lerp(cameraIdealPosition, 0.15);
+
+    // 跟随玩家时，看向球的位置加上一个偏移 (例如，瞄准球的上方一点)
+    const lookAtTarget = ball.getPosition().clone().add(cameraTargetOffset);
+    camera.lookAt(lookAtTarget);
   }
 };
 
@@ -754,7 +1053,7 @@ const animate = () => {
   requestAnimationFrame(animate.bind(this));
 
   if (isCharging.value) {
-    power.value += 0.5 * powerChargeDirection;
+    power.value += CONTROLS.POWER_CHARGE_SPEED * powerChargeDirection;
     if (power.value >= CONTROLS.MAX_POWER) {
       power.value = CONTROLS.MAX_POWER;
       powerChargeDirection = -1;
@@ -762,7 +1061,6 @@ const animate = () => {
       power.value = 0;
       powerChargeDirection = 1;
     }
-    updatePowerMeter();
   }
 
   if (goalkeeper) {
@@ -804,7 +1102,7 @@ const init = () => {
     createField();
     createBall();
     createPlayer();
-    createWall();
+    // createWall();
     createGoalkeeper();
     setupEventListeners();
     const loading = document.querySelector(".loading") as HTMLElement;
