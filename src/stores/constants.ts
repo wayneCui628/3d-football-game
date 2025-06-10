@@ -77,9 +77,9 @@ export const SIZES: ObjectSizes = {
 // 游戏控制常量
 export const CONTROLS: ControlConstants = {
   MAX_POWER: 125,
-  POWER_CHARGE_SPEED: 0.3,
+  POWER_CHARGE_SPEED: 0.8,
   MAX_CURVE: 2.0,
-  MAX_ACCUMULATED_CURVE_MAGNITUDE: 50,
+  MAX_ACCUMULATED_CURVE_MAGNITUDE: 200,
   CAMERA_SENSITIVITY: 0.0025,
   MAX_PITCH: (Math.PI / 2) * 0.48,
   MIN_PITCH: (-Math.PI / 2) * 0.1,
