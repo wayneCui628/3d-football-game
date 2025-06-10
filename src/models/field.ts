@@ -327,6 +327,80 @@ export class Field {
     this.createNet(goalLineZ);
   }
 
+  private createSubdividedNetFace(
+    v1Name: string, // 四边形的第一个角点名称 (例如，左下)
+    v2Name: string, // 第二个角点 (例如，右下)
+    v3Name: string, // 第三个角点 (例如，右上)
+    v4Name: string, // 第四个角点 (例如，左上)
+    segmentsU: number, // U方向 (v1-v2 / v4-v3 方向) 的细分段数
+    segmentsV: number, // V方向 (v1-v4 / v2-v3 方向) 的细分段数
+    allVertices: { [key: string]: THREE.Vector3 }, // 包含所有主要顶点的对象
+    material: THREE.Material // 球网材质
+  ): THREE.Mesh {
+    const geometry = new THREE.BufferGeometry();
+    const vertices_coords: number[] = []; // 存储所有细分后的顶点坐标 (x,y,z,x,y,z,...)
+    const indices: number[] = []; // 存储构成三角形的顶点索引
+
+    const v1 = allVertices[v1Name];
+    const v2 = allVertices[v2Name];
+    const v3 = allVertices[v3Name];
+    const v4 = allVertices[v4Name];
+
+    // 生成所有细分顶点
+    for (let j = 0; j <= segmentsV; j++) {
+      // 遍历V方向的每一行
+      const tV = j / segmentsV; // 当前行在V方向的插值比例 (0 到 1)
+
+      // 计算当前V行上的左右两个基准点
+      // 左基准点: v1 和 v4 之间的插值
+      const leftEdgePoint = new THREE.Vector3().lerpVectors(v1, v4, tV);
+      // 右基准点: v2 和 v3 之间的插值
+      const rightEdgePoint = new THREE.Vector3().lerpVectors(v2, v3, tV);
+
+      for (let i = 0; i <= segmentsU; i++) {
+        // 遍历U方向的每一列
+        const tU = i / segmentsU; // 当前列在U方向的插值比例 (0 到 1)
+
+        // 在左右基准点之间插值得到当前顶点
+        const point = new THREE.Vector3().lerpVectors(
+          leftEdgePoint,
+          rightEdgePoint,
+          tU
+        );
+        vertices_coords.push(point.x, point.y, point.z);
+      }
+    }
+
+    // 生成索引来构建三角形面片
+    // (segmentsU + 1) 是U方向的顶点数 (因为 segmentsU 是段数)
+    for (let j = 0; j < segmentsV; j++) {
+      // 遍历V方向的行 (不包括最后一行顶点)
+      for (let i = 0; i < segmentsU; i++) {
+        // 遍历U方向的列 (不包括最后一列顶点)
+        // 计算组成一个小四边形的四个顶点的索引
+        const a = j * (segmentsU + 1) + i; // 当前格子左下角
+        const b = j * (segmentsU + 1) + (i + 1); // 当前格子右下角
+        const c = (j + 1) * (segmentsU + 1) + (i + 1); // 当前格子右上角
+        const d = (j + 1) * (segmentsU + 1) + i; // 当前格子左上角
+
+        // 用这两个索引起组创建两个三角形来填充这个小四边形
+        // 三角形1: (a, b, d)
+        indices.push(a, b, d);
+        // 三角形2: (b, c, d)
+        indices.push(b, c, d);
+      }
+    }
+
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(vertices_coords, 3)
+    );
+    geometry.setIndex(indices); // 设置顶点索引
+    geometry.computeVertexNormals(); // 计算法线（对于线框材质可能不是必须，但好习惯）
+
+    return new THREE.Mesh(geometry, material);
+  }
+
   private createNet(goalLineZ: number): void {
     const netMaterial = new THREE.MeshBasicMaterial({
       color: 0xdddddd,
@@ -340,19 +414,20 @@ export class Field {
     const netShapeDepth = FIELD.GOAL_DEPTH * 0.5;
     const netBottomDepth = FIELD.GOAL_DEPTH;
 
-    const vertices: { [key: string]: THREE.Vector3 } = {
+    // 顶点定义保持不变
+    const verticesData: { [key: string]: THREE.Vector3 } = {
       ftl: new THREE.Vector3(-FIELD.GOAL_WIDTH / 2, FIELD.GOAL_HEIGHT, 0),
       ftr: new THREE.Vector3(FIELD.GOAL_WIDTH / 2, FIELD.GOAL_HEIGHT, 0),
       fbl: new THREE.Vector3(-FIELD.GOAL_WIDTH / 2, 0, 0),
       fbr: new THREE.Vector3(FIELD.GOAL_WIDTH / 2, 0, 0),
       btl: new THREE.Vector3(
-        (-FIELD.GOAL_WIDTH / 2) * 0.9,
-        FIELD.GOAL_HEIGHT - FIELD.GOAL_DEPTH * 0.2,
+        (-FIELD.GOAL_WIDTH / 2) * 0.95,
+        FIELD.GOAL_HEIGHT - FIELD.GOAL_DEPTH * 0.1,
         sideSign * netShapeDepth
       ),
       btr: new THREE.Vector3(
-        (FIELD.GOAL_WIDTH / 2) * 0.9,
-        FIELD.GOAL_HEIGHT - FIELD.GOAL_DEPTH * 0.2,
+        (FIELD.GOAL_WIDTH / 2) * 0.95,
+        FIELD.GOAL_HEIGHT - FIELD.GOAL_DEPTH * 0.1,
         sideSign * netShapeDepth
       ),
       bbl: new THREE.Vector3(
@@ -367,79 +442,68 @@ export class Field {
       ),
     };
 
-    for (const key in vertices) {
-      vertices[key].z += goalLineZ;
+    for (const key in verticesData) {
+      verticesData[key].z += goalLineZ;
     }
 
-    const v_map: { [key: string]: number } = {
-      ftl: 0,
-      ftr: 1,
-      fbl: 2,
-      fbr: 3,
-      btl: 4,
-      btr: 5,
-      bbl: 6,
-      bbr: 7,
-    };
-    const vertex_array = [
-      vertices.ftl,
-      vertices.ftr,
-      vertices.fbl,
-      vertices.fbr,
-      vertices.btl,
-      vertices.btr,
-      vertices.bbl,
-      vertices.bbr,
-    ];
+    // 定义细分程度
+    const X_SEGMENTS = 16; // 水平方向细分数，例如宽度方向
+    const Y_SEGMENTS = 6; // 垂直方向细分数，例如高度方向
+    const Z_SEGMENTS = 6; // 深度方向细分数 (如果需要)
 
-    // 创建网面
-    const createNetFace = (v_indices: string[][]): THREE.Mesh => {
-      const geometry = new THREE.BufferGeometry();
-      const face_vertices: number[] = [];
-      v_indices.forEach((index_group) => {
-        face_vertices.push(
-          vertex_array[v_map[index_group[0]]].x,
-          vertex_array[v_map[index_group[0]]].y,
-          vertex_array[v_map[index_group[0]]].z,
-          vertex_array[v_map[index_group[1]]].x,
-          vertex_array[v_map[index_group[1]]].y,
-          vertex_array[v_map[index_group[1]]].z,
-          vertex_array[v_map[index_group[2]]].x,
-          vertex_array[v_map[index_group[2]]].y,
-          vertex_array[v_map[index_group[2]]].z
-        );
-      });
-      geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(face_vertices, 3)
-      );
-      geometry.computeVertexNormals();
-      return new THREE.Mesh(geometry, netMaterial);
-    };
+    // 后网面
+    this.scene.add(
+      this.createSubdividedNetFace(
+        "bbl",
+        "bbr",
+        "btr",
+        "btl",
+        X_SEGMENTS,
+        Y_SEGMENTS, // 可以调整后网的细分
+        verticesData,
+        netMaterial
+      )
+    );
 
-    // 添加各个网面
-    const backNetIndices = [
-      ["bbl", "btl", "btr"],
-      ["bbl", "btr", "bbr"],
-    ];
-    this.scene.add(createNetFace(backNetIndices));
+    // 左侧网面 (从球门外向内看球门左侧)
+    // v1=fbl(前下), v2=bbl(后下), v3=btl(后上), v4=ftl(前上)
+    this.scene.add(
+      this.createSubdividedNetFace(
+        "fbl",
+        "bbl",
+        "btl",
+        "ftl",
+        Z_SEGMENTS,
+        Y_SEGMENTS,
+        verticesData,
+        netMaterial
+      )
+    );
 
-    const leftNetIndices = [
-      ["fbl", "ftl", "btl"],
-      ["fbl", "btl", "bbl"],
-    ];
-    this.scene.add(createNetFace(leftNetIndices));
+    this.scene.add(
+      this.createSubdividedNetFace(
+        "fbr",
+        "bbr",
+        "btr",
+        "ftr", // 保持顺序 fbr -> bbr -> btr -> ftr
+        Z_SEGMENTS,
+        Y_SEGMENTS,
+        verticesData,
+        netMaterial
+      )
+    );
 
-    const rightNetIndices = [
-      ["fbr", "bbr", "btr"],
-      ["fbr", "btr", "ftr"],
-    ];
-    this.scene.add(createNetFace(rightNetIndices));
-
-    const topNetIndices = [
-      ["ftl", "ftr", "btr"],
-      ["ftl", "btr", "btl"],
-    ];
-    this.scene.add(createNetFace(topNetIndices));
+    this.scene.add(
+      this.createSubdividedNetFace(
+        "ftl",
+        "ftr",
+        "btr",
+        "btl",
+        X_SEGMENTS,
+        Z_SEGMENTS, // 顶网的U,V可能都代表平面上的方向
+        verticesData,
+        netMaterial
+      )
+    );
   }
 }
