@@ -17,6 +17,7 @@ interface FieldDimensions {
 
 interface PhysicsConstants {
   GRAVITY: THREE.Vector3;
+  RHO: number;
   AIR_RESISTANCE_FACTOR: number;
   GROUND_FRICTION_FACTOR: number;
   RESTITUTION_COEFFICIENT: number;
@@ -26,6 +27,7 @@ interface PhysicsConstants {
 
 interface ObjectSizes {
   BALL_RADIUS: number;
+  BALL_MASS: number;
   PLAYER_HEIGHT: number;
   GOALKEEPER_HEIGHT: number;
 }
@@ -33,7 +35,6 @@ interface ObjectSizes {
 interface ControlConstants {
   MAX_POWER: number;
   POWER_CHARGE_SPEED: number;
-  MAX_CURVE: number;
   MAX_ACCUMULATED_CURVE_MAGNITUDE: number;
   CAMERA_SENSITIVITY: number;
   MAX_PITCH: number;
@@ -60,7 +61,8 @@ export const FIELD: FieldDimensions = {
 // 物理常量
 export const PHYSICS: PhysicsConstants = {
   GRAVITY: new THREE.Vector3(0, -9.81, 0), // 重力加速度 (m/s²)
-  AIR_RESISTANCE_FACTOR: 0.05, // 空气阻力系数
+  RHO: 1.225, // 空气密度 (kg/m³)
+  AIR_RESISTANCE_FACTOR: 0.35, // 足球的阻力系数
   GROUND_FRICTION_FACTOR: 0.7, // 地面摩擦系数
   RESTITUTION_COEFFICIENT: 0.4, // 球体碰撞恢复系数
   POST_RESTITUTION_COEFFICIENT: 0.5, // 门柱碰撞恢复系数
@@ -70,6 +72,7 @@ export const PHYSICS: PhysicsConstants = {
 // 游戏对象尺寸
 export const SIZES: ObjectSizes = {
   BALL_RADIUS: 0.11, // 足球半径
+  BALL_MASS: 0.43, // 足球质量 (kg)
   PLAYER_HEIGHT: 1.8, // 球员高度
   GOALKEEPER_HEIGHT: 1.95, // 门将高度
 };
@@ -78,8 +81,7 @@ export const SIZES: ObjectSizes = {
 export const CONTROLS: ControlConstants = {
   MAX_POWER: 125,
   POWER_CHARGE_SPEED: 0.8,
-  MAX_CURVE: 2.0,
-  MAX_ACCUMULATED_CURVE_MAGNITUDE: 200,
+  MAX_ACCUMULATED_CURVE_MAGNITUDE: 100, // 最大曲线累积幅度
   CAMERA_SENSITIVITY: 0.0025,
   MAX_PITCH: (Math.PI / 2) * 0.48,
   MIN_PITCH: (-Math.PI / 2) * 0.1,

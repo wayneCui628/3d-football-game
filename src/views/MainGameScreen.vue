@@ -4,7 +4,21 @@
     <!-- 游戏UI -->
     <div class="game-ui">
       <!-- 准星 -->
-      <div id="crosshair" class="crosshair"></div>
+      <div
+        id="crosshair"
+        class="crosshair"
+        :style="{
+          display: isPointerLocked && !isSlowMotionActive ? 'block' : 'none',
+        }"
+      >
+        <div
+          class="crosshair-dot"
+          :style="{
+            left: `${curve.x * 0.5 + 50}%`,
+            top: `${curve.y * 0.5 + 50}%`,
+          }"
+        ></div>
+      </div>
 
       <!-- 力量条 -->
       <div class="power-meter">
@@ -69,17 +83,16 @@ let goalkeeper: Goalkeeper;
 
 const power = ref(0);
 const isCharging = ref(false);
-// const cameraRotation = ref({ x: Math.PI / 10, y: Math.PI });
 const isPaused = ref(false);
-let isPointerLocked = false;
+const isPointerLocked = ref(false); // 是否锁定鼠标指针
 
 const shotsCount = ref(0);
 const goalsCount = ref(0);
 
 let animationFrameId: number | null = null;
 let lastShotTime = 0;
-let powerChargeDirection = 1;
-let curve = new THREE.Vector2(0, 0); // 用于存储弧线方向的二维向量 (X, Y)，可以用于计算弧线效果
+
+const curve = ref<THREE.Vector2>(new THREE.Vector2(0, 0)); // 用于显示弧线的指示器
 
 let shootDirection = new THREE.Vector3();
 let cameraAzimuth = 0; // 摄像机水平方位角 (绕Y轴)
@@ -91,7 +104,7 @@ const minElevation = -Math.PI / 12; // 最小俯仰角 (例如-60度)
 const maxElevation = (Math.PI / 3) * 0.9; // 最大俯仰角 (例如接近90度，但不完全是，防止万向节锁问题)
 
 const isSlowMotionActive = ref(false); // New state for slow motion
-const SLOW_MOTION_FACTOR = 0.5; // New constant for slowdown
+const SLOW_MOTION_FACTOR = 0.9; // New constant for slowdown
 const BALL_FOLLOW_CAMERA_DISTANCE = 7; // Distance for camera when following ball
 
 let ballFollowAzimuth = 0; // 围绕球的水平角度
@@ -160,7 +173,7 @@ const createBall = () => {
   const initialPosition = new THREE.Vector3(
     0,
     SIZES.BALL_RADIUS,
-    -FIELD.LENGTH / 2 + 25
+    -FIELD.LENGTH / 2 + 11
   );
   ball = new Ball(scene, initialPosition, renderer);
 };
@@ -189,19 +202,15 @@ const setupEventListeners = () => {
   // 请求鼠标锁定
   if (gameStarted) {
     renderer.domElement.requestPointerLock();
-    const crosshair = document.getElementById("crosshair") as HTMLElement;
-    if (crosshair) {
-      crosshair.style.display = "block";
-    }
   }
 
   renderer.domElement.addEventListener("mousedown", (e) => {
-    if (!gameStarted || !isPointerLocked || ball.isMoving()) return;
+    if (!gameStarted || !isPointerLocked.value || ball.isMoving()) return;
     if (e.button === 0) startCharging();
   });
 
   document.addEventListener("mouseup", (e) => {
-    if (!gameStarted || !isPointerLocked || !isCharging.value) return;
+    if (!gameStarted || !isPointerLocked.value || !isCharging.value) return;
     if (e.button === 0) shoot();
   });
 
@@ -215,7 +224,7 @@ const setupEventListeners = () => {
 };
 
 const onPointerMove = (event: MouseEvent) => {
-  if (!gameStarted || !isPointerLocked) return;
+  if (!gameStarted || !isPointerLocked.value) return;
 
   if (isSlowMotionActive.value) {
     // 优先检查慢动作状态
@@ -246,18 +255,13 @@ const onPointerMove = (event: MouseEvent) => {
 };
 
 const onPointerLockChange = () => {
-  isPointerLocked = document.pointerLockElement === renderer.domElement;
-  const crosshair = document.getElementById("crosshair") as HTMLElement;
-  if (crosshair) {
-    crosshair.style.display = isPointerLocked ? "block" : "none";
-  }
-
-  if (!isPointerLocked) {
+  isPointerLocked.value = document.pointerLockElement === renderer.domElement;
+  if (!isPointerLocked.value) {
     console.log("Ttoggling pause state");
     isPaused.value = true;
   }
 
-  if (!isPointerLocked && isCharging.value) {
+  if (!isPointerLocked.value && isCharging.value) {
     isCharging.value = false;
     power.value = 0;
   }
@@ -271,36 +275,24 @@ const startCharging = () => {
   ) {
     isCharging.value = true;
     power.value = 0;
-    powerChargeDirection = 1;
-    curve = new THREE.Vector2(0, 0); // 重置弧线方向
+    curve.value = new THREE.Vector2(0, 0); // 重置弧线方向
   }
 };
 
 const addCurve = (movementX: number, movementY: number) => {
-  console.log(
-    "Adding curve with movementX:",
-    movementX,
-    "movementY:",
-    movementY
-  );
   const addedCurveDelta = new THREE.Vector2(movementX, movementY);
-  curve = curve.add(addedCurveDelta); // 累加鼠标移动的弧线方向
-  if (curve.length() > CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE) {
-    curve.normalize().multiplyScalar(CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE);
+  curve.value = curve.value.add(addedCurveDelta); // 累加鼠标移动的弧线方向
+  if (curve.value.length() > CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE) {
+    curve.value
+      .normalize()
+      .multiplyScalar(CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE);
   }
-  console.log("Current curve:", curve);
-  console.log(
-    "Curve amount:",
-    curve.clone().length(),
-    "Curve dir:",
-    curve.clone().normalize()
-  );
 };
 
 const shoot = () => {
   if (!isCharging.value) return;
-
-  console.log("Shooting with power:", power.value);
+  const shootSpeed = power.value * 0.4;
+  console.log("Shooting with speed: ", shootSpeed, "m/s");
 
   isCharging.value = false;
   shotsCount.value++;
@@ -315,7 +307,7 @@ const shoot = () => {
   const cameraPositionForShot = camera.position.clone(); // 保存射门瞬间的相机位置
   const aimRayDirection = new THREE.Vector3();
   camera.getWorldDirection(aimRayDirection);
-  const targetSphereRadius = 25.0;
+  const targetSphereRadius = 11.0;
   const groundLevelY = 0.0;
 
   const aimRay = new THREE.Ray(cameraPositionForShot, aimRayDirection);
@@ -358,7 +350,14 @@ const shoot = () => {
   } else {
     shootDirection.normalize();
   }
-  ball.move(shootDirection, power.value, curve);
+  console.log(
+    "Shoot Direction:",
+    shootDirection.x.toFixed(2),
+    shootDirection.y.toFixed(2),
+    shootDirection.z.toFixed(2)
+  );
+
+  ball.move(shootDirection, shootSpeed, curve.value);
 
   // 激活慢动作
   isSlowMotionActive.value = true;
@@ -474,12 +473,6 @@ const checkCollisions = () => {
   //     .normalize();
   //   const speedBeforeHit = ball.getVelocity().length();
   //   ball.move(reflectDir, speedBeforeHit * PHYSICS.RESTITUTION_COEFFICIENT);
-  //   console.log(
-  //     "人墙碰撞:",
-  //     wallCollision.playerPosition,
-  //     speedBeforeHit,
-  //     speedBeforeHit * PHYSICS.RESTITUTION_COEFFICIENT
-  //   );
   //   showResult("击中人墙!");
   //   return;
   // }
@@ -603,9 +596,9 @@ const checkGoalpostCollision = () => {
   }
 
   if (collisionOccurred) {
-    const finalPower = newVelocity.length(); // 碰撞后的速度大小
+    const finalSpeed = newVelocity.length(); // 碰撞后的速度大小
     const finalDirection = newVelocity.clone().normalize(); // 碰撞后的速度方向 (单位向量)
-    ball.move(finalDirection, finalPower);
+    ball.move(finalDirection, finalSpeed);
     return;
   }
 
@@ -648,9 +641,9 @@ const checkGoalpostCollision = () => {
   }
 
   if (collisionOccurred) {
-    const finalPower = newVelocity.length();
+    const finalSpeed = newVelocity.length();
     const finalDirection = newVelocity.clone().normalize();
-    ball.move(finalDirection, finalPower);
+    ball.move(finalDirection, finalSpeed);
   }
 };
 
@@ -701,11 +694,8 @@ const resetBallAndPlayer = (initialPosition: THREE.Vector3 | null = null) => {
   // Reset camera aiming angles, not full rotation object
   cameraAzimuth = 0; // Reset horizontal aim to forward
   cameraElevation = Math.PI / 6; // Reset vertical aim to default
-  // cameraRotation.value.y = Math.PI; // This might not be needed if using azimuth/elevation correctly
-  // cameraRotation.value.x = Math.PI / 10;
-
   power.value = 0;
-  curve = new THREE.Vector2(0, 0); // Reset curve direction
+  curve.value = new THREE.Vector2(0, 0); // Reset curve direction
   isCharging.value = false;
 
   updateCamera(); // Ensure camera updates to new player position
@@ -820,13 +810,9 @@ const animate = () => {
   requestAnimationFrame(animate.bind(this));
 
   if (isCharging.value) {
-    power.value += CONTROLS.POWER_CHARGE_SPEED * powerChargeDirection;
+    power.value += CONTROLS.POWER_CHARGE_SPEED;
     if (power.value >= CONTROLS.MAX_POWER) {
       power.value = CONTROLS.MAX_POWER;
-      powerChargeDirection = -1;
-    } else if (power.value <= 0) {
-      power.value = 0;
-      powerChargeDirection = 1;
     }
   }
 
@@ -927,11 +913,19 @@ onUnmounted(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 10px;
-  height: 10px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: 2px solid @white;
   display: none;
+  .crosshair-dot {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    background-color: @white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .power-meter {
@@ -951,19 +945,6 @@ onUnmounted(() => {
     background: @power-gradient;
     transition: width 0.1s;
   }
-}
-
-.curve-indicator {
-  position: absolute;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: @black;
-  color: @white;
-  padding: 5px 10px;
-  border-radius: 5px;
-  font-size: 14px;
-  display: none;
 }
 
 .game-stats {

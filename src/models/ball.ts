@@ -76,10 +76,10 @@ export class Ball {
 
   public move(
     direction: THREE.Vector3,
-    power: number,
+    speed: number,
     accumulatedCurve: THREE.Vector2 = new THREE.Vector2(0, 0)
   ): void {
-    this.velocity.copy(direction).multiplyScalar(power);
+    this.velocity.copy(direction).multiplyScalar(speed);
 
     // --- 将 accumulatedCurve (Vector2) 转换为 this.angularVelocity (Vector3) ---
     const MAX_SPIN_RATE = 15 * Math.PI; // 每秒最大旋转弧度 (例如 7.5圈/秒)
@@ -163,13 +163,20 @@ export class Ball {
   public update(deltaTime: number): void {
     // 空气阻力
     const speed = this.velocity.length();
+    const BALL_AREA = Math.PI * SIZES.BALL_RADIUS * SIZES.BALL_RADIUS; // 球的横截面积
     if (speed > 0.01) {
+      const dragMagnitude =
+        0.5 *
+        PHYSICS.RHO *
+        speed *
+        speed *
+        PHYSICS.AIR_RESISTANCE_FACTOR *
+        BALL_AREA;
+      const accelerationDueToDrag = dragMagnitude / SIZES.BALL_MASS; // a = F/m
       const dragForce = this.velocity
         .clone()
         .normalize()
-        .multiplyScalar(
-          -PHYSICS.AIR_RESISTANCE_FACTOR * speed * speed * deltaTime
-        );
+        .multiplyScalar(-accelerationDueToDrag * deltaTime);
       this.velocity.add(dragForce);
     }
 
@@ -280,7 +287,7 @@ export class Ball {
     // 将力应用到球的速度上
     this.velocity.add(force);
     // 确保球的速度不会过大
-    const maxSpeed = CONTROLS.MAX_POWER * 2; // 可以根据需要调整最大速度
+    const maxSpeed = CONTROLS.MAX_POWER * 0.4 * 2; // 可以根据需要调整最大速度
     if (this.velocity.lengthSq() > maxSpeed ** 2) {
       this.velocity.normalize().multiplyScalar(maxSpeed);
     }
