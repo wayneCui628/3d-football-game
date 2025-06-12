@@ -23,6 +23,8 @@ interface PhysicsConstants {
   RESTITUTION_COEFFICIENT: number;
   POST_RESTITUTION_COEFFICIENT: number;
   MAGNUS_COEFFICIENT: number;
+  AIR_SPIN_DECAY_RATE: number;
+  GROUND_SPIN_DECAY_RATE: number;
 }
 
 interface ObjectSizes {
@@ -62,11 +64,13 @@ export const FIELD: FieldDimensions = {
 export const PHYSICS: PhysicsConstants = {
   GRAVITY: new THREE.Vector3(0, -9.81, 0), // 重力加速度 (m/s²)
   RHO: 1.225, // 空气密度 (kg/m³)
-  AIR_RESISTANCE_FACTOR: 0.35, // 足球的阻力系数
-  GROUND_FRICTION_FACTOR: 0.7, // 地面摩擦系数
+  AIR_RESISTANCE_FACTOR: 0.25, // 足球的阻力系数
+  GROUND_FRICTION_FACTOR: 0.8, // 地面摩擦系数
   RESTITUTION_COEFFICIENT: 0.4, // 球体碰撞恢复系数
   POST_RESTITUTION_COEFFICIENT: 0.5, // 门柱碰撞恢复系数
   MAGNUS_COEFFICIENT: 0.01, // 马格努斯效应系数
+  AIR_SPIN_DECAY_RATE: 0.1, // 空中旋转衰减率
+  GROUND_SPIN_DECAY_RATE: 0.5, // 地面摩擦下的旋转衰减率
 };
 
 // 游戏对象尺寸
@@ -81,7 +85,7 @@ export const SIZES: ObjectSizes = {
 export const CONTROLS: ControlConstants = {
   MAX_POWER: 125,
   POWER_CHARGE_SPEED: 0.8,
-  MAX_ACCUMULATED_CURVE_MAGNITUDE: 100, // 最大曲线累积幅度
+  MAX_ACCUMULATED_CURVE_MAGNITUDE: 200, // 最大曲线累积幅度
   CAMERA_SENSITIVITY: 0.0025,
   MAX_PITCH: (Math.PI / 2) * 0.48,
   MIN_PITCH: (-Math.PI / 2) * 0.1,

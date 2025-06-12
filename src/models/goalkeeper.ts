@@ -226,12 +226,6 @@ export class Goalkeeper {
     // --- 左肩和左臂 ---
     const leftShoulderPivot = new THREE.Group();
 
-    // 1. 定位肩部枢轴
-    //    这个位置应该是肩膀关节在守门员模型中的世界坐标（如果守门员group在原点）
-    //    或者相对于守门员group的局部坐标。
-    //    假设 torsoCenterY 是躯干几何中心的Y坐标。
-    //    假设 this.torsoRadiusGK 是躯干半径。
-    //    需要根据你的模型精确调整肩部枢轴的位置。
     const shoulderJointY = cylinderGK.position.y + torsoCylinderHeight * 0.4; // 大概在圆柱躯干的上部
     const shoulderJointX = this.torsoRadiusGK + armRadius * 0.2; // 稍微偏出躯干一点
     leftShoulderPivot.position.set(shoulderJointX, shoulderJointY, 0); // Z=0 或根据需要调整

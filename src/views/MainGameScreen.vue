@@ -14,8 +14,8 @@
         <div
           class="crosshair-dot"
           :style="{
-            left: `${curve.x * 0.5 + 50}%`,
-            top: `${curve.y * 0.5 + 50}%`,
+            left: `${curve.x * 0.25 + 50}%`,
+            top: `${curve.y * 0.25 + 50}%`,
           }"
         ></div>
       </div>
@@ -104,7 +104,7 @@ const minElevation = -Math.PI / 12; // 最小俯仰角 (例如-60度)
 const maxElevation = (Math.PI / 3) * 0.9; // 最大俯仰角 (例如接近90度，但不完全是，防止万向节锁问题)
 
 const isSlowMotionActive = ref(false); // New state for slow motion
-const SLOW_MOTION_FACTOR = 0.9; // New constant for slowdown
+const SLOW_MOTION_FACTOR = 1; // New constant for slowdown
 const BALL_FOLLOW_CAMERA_DISTANCE = 7; // Distance for camera when following ball
 
 let ballFollowAzimuth = 0; // 围绕球的水平角度
@@ -173,7 +173,7 @@ const createBall = () => {
   const initialPosition = new THREE.Vector3(
     0,
     SIZES.BALL_RADIUS,
-    -FIELD.LENGTH / 2 + 11
+    -FIELD.LENGTH / 2 + 25
   );
   ball = new Ball(scene, initialPosition, renderer);
 };
@@ -291,7 +291,7 @@ const addCurve = (movementX: number, movementY: number) => {
 
 const shoot = () => {
   if (!isCharging.value) return;
-  const shootSpeed = power.value * 0.4;
+  const shootSpeed = power.value * 0.3;
   console.log("Shooting with speed: ", shootSpeed, "m/s");
 
   isCharging.value = false;

@@ -80,35 +80,40 @@ export class Ball {
     accumulatedCurve: THREE.Vector2 = new THREE.Vector2(0, 0)
   ): void {
     this.velocity.copy(direction).multiplyScalar(speed);
-
-    // --- 将 accumulatedCurve (Vector2) 转换为 this.angularVelocity (Vector3) ---
     const MAX_SPIN_RATE = 15 * Math.PI; // 每秒最大旋转弧度 (例如 7.5圈/秒)
 
-    // curveSensitivityFactor 用来将累积的鼠标位移 (accumulatedCurve.length())
-    // 映射到一个合适的旋转强度比例 (0到1)
-    // CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE 是你在 addCurve 中设定的最大累积值
-    // 如果没有在 addCurve 中限制，你需要在这里估计一个典型输入的最大值
-    const curveSensitivityFactor =
+    let curveIntensity =
       accumulatedCurve.length() / CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE;
-    // 或者用一个固定的缩放因子, e.g., 0.01
+    curveIntensity = Math.min(1.0, Math.max(0.0, curveIntensity)); // 限制在 0-1
+    curveIntensity = Math.pow(curveIntensity, 0.75); // 例如用0.75次方
 
-    let targetSpinRate = Math.min(1.0, curveSensitivityFactor) * MAX_SPIN_RATE; // 最终的旋转速率标量
+    let targetSpinRate = curveIntensity * MAX_SPIN_RATE; // 最终的旋转速率标量
 
-    // 如果累积的 curve 值很小，则不施加明显旋转
-    if (accumulatedCurve.lengthSq() < 10) {
-      // 阈值，例如累积量小于10像素平方，视为无弧线
+    const MIN_ACCUMULATED_CURVE_FOR_INTENTIONAL_SPIN_SQ =
+      (CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE * 0.1) ** 2;
+
+    // 小输入阈值
+    if (
+      accumulatedCurve.lengthSq() <
+      (CONTROLS.MAX_ACCUMULATED_CURVE_MAGNITUDE * 0.1) ** 2
+    ) {
+      // 例如，小于最大输入10%的平方
       targetSpinRate = 0;
     }
 
     this.angularVelocity.set(0, 0, 0); // 重置角速度
 
-    if (targetSpinRate > 0.01) {
+    if (
+      targetSpinRate > 0.01 &&
+      accumulatedCurve.lengthSq() >
+        MIN_ACCUMULATED_CURVE_FOR_INTENTIONAL_SPIN_SQ
+    ) {
       // 归一化 accumulatedCurve 来得到2D方向
       const curveDir2D = accumulatedCurve.clone().normalize();
 
       // curveDir2D.x (原 movementX 累积) 控制绕Y轴的旋转 (左右弧线)
-      // 符号可能需要调整：例如，鼠标向右 (curveDir2D.x > 0) 产生向右的球 (需要角速度 < 0)
-      const spinY = -curveDir2D.x * targetSpinRate; // 负号用于调整方向
+      const spinY_magnitude = Math.abs(curveDir2D.x) * targetSpinRate;
+      this.angularVelocity.y = -Math.sign(curveDir2D.x) * spinY_magnitude;
 
       // curveDir2D.y (原 movementY 累积) 控制绕球的侧向X轴的旋转 (上下弧线)
       // 这个轴垂直于球的飞行方向 (direction) 和世界Y轴
@@ -118,52 +123,65 @@ export class Ball {
       // 只有当球不是纯粹向上或向下飞时，sideAxis才有效
       if (sideAxis.lengthSq() > 0.001) {
         sideAxis.normalize();
-        // 符号可能需要调整：例如，鼠标向下 (curveDir2D.y > 0) 产生下旋 (需要角速度 < 0 绕sideAxis)
-        const spinAroundSide = -curveDir2D.y * targetSpinRate;
 
-        // 将绕sideAxis的旋转分解到世界坐标系的角速度分量
-        // (更简单的方式是直接使用 setFromAxisAngle，但我们是在构建角速度向量)
-        // this.angularVelocity.set(0, spinY, 0);
-        // this.angularVelocity.addScaledVector(sideAxis, spinAroundSide);
+        const spinAroundSide_magnitude =
+          Math.abs(curveDir2D.y) * targetSpinRate;
 
-        // 或者，分别设置：
-        // 绕Y轴的旋转贡献
-        this.angularVelocity.y = spinY;
+        const spinAroundSide_signed =
+          -Math.sign(curveDir2D.y) * spinAroundSide_magnitude; // 符号根据实际效果调整
 
-        // 绕侧向轴的旋转贡献
-        // 将 sideAxis * spinAroundSide 的旋转加到 this.angularVelocity
-        // 注意：如果直接加，可能会因为轴不正交导致问题。
-        // 一个更稳健（但稍微复杂）的方式是分别计算由spinY和spinAroundSide产生的角速度，然后组合。
-        // 简化处理：假设 spinY 和 spinAroundSide 是主要效果
-        const angularVelFromSideSpin = sideAxis.multiplyScalar(spinAroundSide);
-        this.angularVelocity.x += angularVelFromSideSpin.x;
-        // this.angularVelocity.y += angularVelFromSideSpin.y; // Y分量已经由 spinY 贡献
-        this.angularVelocity.z += angularVelFromSideSpin.z;
-      } else {
-        // 球几乎垂直飞行，主要施加绕Y轴的侧旋
-        this.angularVelocity.set(0, spinY, 0);
+        // 将绕 sideAxis 的角速度贡献到 this.angularVelocity
+        const angularVel_SideSpin = sideAxis.multiplyScalar(
+          spinAroundSide_signed
+        );
+
+        // angularVel_SideSpin 贡献X和Z (以及可能的Y，如果飞行方向不是纯水平)
+        this.angularVelocity.x += angularVel_SideSpin.x;
+        this.angularVelocity.z += angularVel_SideSpin.z;
+        if (Math.abs(sideAxis.y) > 0.01) {
+          this.angularVelocity.y += angularVel_SideSpin.y; // 尝试也加上，看看效果
+        }
       }
 
-      // （可选）如果希望旋转轴严格垂直于飞行方向（对于纯侧旋或纯上/下旋）
-      // 可以将 this.angularVelocity 投影到垂直于 direction 的平面上
-      // 但通常由玩家输入直接映射的角速度效果更直观
-
-      // (可选) 限制总角速度大小，以防组合后过大
+      //  限制总角速度大小，以防组合后过大
       if (this.angularVelocity.length() > MAX_SPIN_RATE * 1.2) {
         // 允许组合后稍微超出一点
         this.angularVelocity.normalize().multiplyScalar(MAX_SPIN_RATE * 1.2);
       }
+    } else {
+      // --- 没有明显曲线输入，添加轻微的自然旋转 ---
+      const NATURAL_SPIN_MAX_RATE = 2 * Math.PI;
+      const randomSpinRate = Math.random() * NATURAL_SPIN_MAX_RATE;
+
+      if (randomSpinRate > 0.01) {
+        // 只有当随机速率大于一个小阈值才施加
+        // 创建一个随机的3D旋转轴 (需要归一化)
+        const randomAxis = new THREE.Vector3(
+          Math.random() * 2 - 1, // -1 to 1
+          Math.random() * 2 - 1,
+          Math.random() * 2 - 1
+        );
+        if (randomAxis.lengthSq() > 0.001) {
+          // 避免零向量
+          randomAxis.normalize();
+          this.angularVelocity.copy(randomAxis).multiplyScalar(randomSpinRate);
+        }
+      }
     }
-    // console.log("Final Curve Vec2:", accumulatedCurve, "Target Spin Rate:", targetSpinRate, "Angular Velocity:", this.angularVelocity);
   }
   /**
    * 更新球的物理状态
    * @param deltaTime - 时间增量
    */
   public update(deltaTime: number): void {
-    // 空气阻力
     const speed = this.velocity.length();
     const BALL_AREA = Math.PI * SIZES.BALL_RADIUS * SIZES.BALL_RADIUS; // 球的横截面积
+    const CL_SLOPE = 1.0; // C_L = CL_SLOPE * S
+    const INERTIA_SCALAR = 2 / 5; // 对于实心球体 I = (2/5)mr² 的系数部分
+    const BALL_INERTIA =
+      INERTIA_SCALAR * SIZES.BALL_MASS * SIZES.BALL_RADIUS ** 2; // 转动惯量
+
+    // 空气阻力
     if (speed > 0.01) {
       const dragMagnitude =
         0.5 *
@@ -181,41 +199,73 @@ export class Ball {
     }
 
     // 曲线效果 (马格努斯效应)
-    // 假设 this.angularVelocity (ω) 是在射门时设置的，代表球的旋转轴和快慢
-    // 例如: this.angularVelocity = new THREE.Vector3(spinX, spinY, spinZ);
     if (
       this.angularVelocity &&
       this.angularVelocity.lengthSq() > 0.001 &&
       speed > 0.1
     ) {
-      // 计算马格努斯力 F_magnus = C * (ω × v)
-      // C 是一个系数，可以包含空气密度、球半径等，我们用一个简化的 MAGNUS_COEFFICIENT
-      const magnusForceDirection = new THREE.Vector3().crossVectors(
+      // 1. 计算角速度中垂直于线速度的分量 ω_perp (的模)
+      //    ω_perp = |ω x v_normalized| = |ω| * sin(θ)
+      //    其中 v_normalized 是单位速度向量, θ 是 ω 和 v 之间的夹角
+      const velocityNormalized = this.velocity.clone().normalize();
+      const omega_cross_v_normalized = new THREE.Vector3().crossVectors(
         this.angularVelocity,
-        this.velocity
+        velocityNormalized
       );
+      const omega_perp_magnitude = omega_cross_v_normalized.length(); // |ω_perp|
 
-      // magnusForceDirection 的大小与 |ω|*|v|*sin(angle_between_them) 成正比
-      // 我们需要将其归一化并乘以一个代表马GNUS效应强度的标量
-      // 这个标量本身也可能与速度和角速度大小有关
-      // 简化：力的方向由叉乘决定，大小由 magnusForceDirection.length() 和一个系数决定
-
-      // PHYSICS.MAGNUS_COEFFICIENT 可以是一个综合了空气密度、球半径、旋转效率等的系数
-      // 真实马格努斯力大小也与 speed 和 angularVelocity.length() 相关
-      const magnusForceMagnitude =
-        PHYSICS.MAGNUS_COEFFICIENT * magnusForceDirection.length();
-
-      // 将方向向量归一化，然后乘以计算出的大小和deltaTime
-      if (magnusForceDirection.lengthSq() > 0.0001) {
+      // 2. 计算自旋比 S
+      let spinRatio = 0;
+      if (speed > 0.01) {
         // 避免除以零
-        magnusForceDirection.normalize();
-        const magnusForceImpulse = magnusForceDirection.multiplyScalar(
-          magnusForceMagnitude * deltaTime
+        spinRatio = (omega_perp_magnitude * SIZES.BALL_RADIUS) / speed; // S = (ω_perp * r) / v
+      }
+      // 3. 计算升力系数 C_L (使用策略A：线性关系并限制最大值 )
+      let cL = CL_SLOPE * spinRatio;
+      // cL = Math.min(cL, MAX_CL);
+      cL = Math.max(cL, 0); // 确保C_L不为负
+
+      // 4. 计算马格努斯力的大小 F_m
+      // F_m = 0.5 * ρ * A * C_L * v^2
+      const magnusForceMagnitude =
+        0.5 * PHYSICS.RHO * BALL_AREA * cL * speed * speed;
+
+      // 5. 确定马格努斯力的方向 (ω × v)
+      //    我们已经有了 omega_cross_v_normalized，它的方向是 ω × v_normalized
+      //    所以它就是马格努斯力的方向。
+      const magnusForceDirection = omega_cross_v_normalized; // 它已经是 ω x v_normalized 了
+
+      if (magnusForceDirection.lengthSq() > 0.0001) {
+        // magnusForceDirection 已经是单位向量了，因为它来自 cross(ω, v_normalized) 然后取length是 |ω_perp|
+        // 如果 omega_cross_v_normalized 直接用作方向，它的大小是 |ω_perp|
+        // 为了得到单位方向向量，我们需要归一化 omega_cross_v_normalized
+        // 另一种方法是直接用 ω x v，然后归一化
+        const actual_magnus_force_dir = new THREE.Vector3().crossVectors(
+          this.angularVelocity,
+          this.velocity
         );
-        // console.log("Angular Vel:", this.angularVelocity, "Velocity:", this.velocity, "Magnus Impulse:", magnusForceImpulse);
-        this.velocity.add(magnusForceImpulse);
+        if (actual_magnus_force_dir.lengthSq() < 0.00001) {
+          // ω 和 v 平行或其中一个为0
+          return; // 没有马格努斯力
+        }
+        actual_magnus_force_dir.normalize();
+
+        // 6. 计算马格努斯力对速度的改变 (冲量 / 质量)
+        //    Δv = (F_m / mass) * Δt
+        //    你需要球的质量 BALL_MASS
+        if (SIZES.BALL_MASS <= 0)
+          throw new Error("Ball mass must be positive."); // 防御性编程
+
+        const magnusAccelerationMagnitude =
+          magnusForceMagnitude / SIZES.BALL_MASS; // a = F/m
+        const magnusVelocityChange = actual_magnus_force_dir.multiplyScalar(
+          magnusAccelerationMagnitude * deltaTime // Δv = a * Δt
+        );
+
+        this.velocity.add(magnusVelocityChange);
       }
     }
+
     // 重力
     this.velocity.add(PHYSICS.GRAVITY.clone().multiplyScalar(deltaTime));
 
@@ -224,7 +274,12 @@ export class Ball {
 
     // 旋转 (为了视觉效果，球的旋转应该主要由 this.angularVelocity 驱动，而不是速度)
     // 如果 this.angularVelocity 代表角速度 (弧度/秒)
+
     if (this.angularVelocity && this.angularVelocity.lengthSq() > 0.001) {
+      // 角速度衰减
+      this.angularVelocity.multiplyScalar(
+        1.0 - PHYSICS.AIR_SPIN_DECAY_RATE * deltaTime
+      );
       // 创建一个四元数来表示这一帧的旋转增量
       const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(
         this.angularVelocity.clone().normalize(), // 旋转轴
@@ -235,49 +290,213 @@ export class Ball {
         rotationQuaternion,
         this.mesh.quaternion
       );
-    } else {
-      // 如果没有角速度（例如直线球或滚动时），可以使用旧的基于线速度的视觉旋转
-      this.mesh.rotation.x += this.velocity.z * deltaTime * 2;
-      this.mesh.rotation.z -= this.velocity.x * deltaTime * 2;
     }
 
-    // 地面碰撞和摩擦
+    // 地面碰撞和反弹 (这部分保持不变)
     if (this.mesh.position.y < SIZES.BALL_RADIUS) {
       this.mesh.position.y = SIZES.BALL_RADIUS;
-      this.velocity.y *= -PHYSICS.RESTITUTION_COEFFICIENT;
+      if (Math.abs(this.velocity.y) < 0.1) this.velocity.y = 0;
 
-      // 地面滚动摩擦
-      if (Math.abs(this.velocity.y) < 0.5) {
-        // 球在地面滚动或滑动
-        const planarVelocity = this.velocity.clone().setY(0);
-        const planarSpeedSq = planarVelocity.lengthSq();
+      // --- 地面滚动和滑动摩擦 ---
+      const MIN_Y_VELOCITY_FOR_STABLE_CONTACT = 0.2; // 用来判断是否稳定接触地面
+      const ALMOST_ZERO_SPEED = 0.08; // 用于判断线速度或角速度是否接近停止
 
-        if (planarSpeedSq > 0.001) {
+      if (this.velocity.y < 0) {
+        // 确保是向下运动时触发碰撞
+        const v_y_in = this.velocity.y; // 入射垂直速度 (负值)
+
+        // 1. 计算接触点滑动速度 (在垂直速度反转前计算)
+        const planarVelocityIn = new THREE.Vector3(
+          this.velocity.x,
+          0,
+          this.velocity.z
+        );
+        const r_contact = new THREE.Vector3(0, -SIZES.BALL_RADIUS, 0);
+        const rotationalVelocityAtContactIn = new THREE.Vector3().crossVectors(
+          this.angularVelocity,
+          r_contact
+        );
+        const slipVelocityIn = new THREE.Vector3().addVectors(
+          planarVelocityIn,
+          rotationalVelocityAtContactIn
+        );
+
+        // --- 处理垂直速度反弹 (这部分不变) ---
+        this.velocity.y *= -PHYSICS.RESTITUTION_COEFFICIENT; // v_y_out
+
+        // --- 计算法向冲量大小 (J_n) ---
+        // J_n = m * (v_y_out - v_y_in)
+        const J_n_magnitude = SIZES.BALL_MASS * (this.velocity.y - v_y_in); // v_y_out 是正, v_y_in 是负, 所以 J_n 是正
+
+        // --- 如果有滑动，计算并施加摩擦冲量对角速度的影响 ---
+        if (slipVelocityIn.lengthSq() > 0.0001) {
+          // 如果存在切向滑动
+          const slipDirection = slipVelocityIn.clone().normalize();
+
+          // 动摩擦冲量大小 J_f = μ_k * J_n
+          const J_f_magnitude = PHYSICS.GROUND_FRICTION_FACTOR * J_n_magnitude;
+
+          // 动摩擦冲量向量 (方向与滑动方向相反)
+          const frictionImpulseVector = slipDirection.multiplyScalar(
+            -J_f_magnitude
+          );
+
+          // 摩擦冲量也会影响线速度 (通常在更完整的碰撞模型中一起求解，这里简化)
+          this.velocity.x += frictionImpulseVector.x / SIZES.BALL_MASS;
+          this.velocity.z += frictionImpulseVector.z / SIZES.BALL_MASS;
+          // 注意：如果在这里改变了线速度，那么后续的滚动摩擦逻辑也需要知道这一点。
+          // 为了逐步改进，可以先只专注于对角速度的影响。
+
+          // 冲量力矩 τ_impulse = r_contact × J_f_vector
+          const torqueImpulseVector = new THREE.Vector3().crossVectors(
+            r_contact,
+            frictionImpulseVector
+          );
+
+          // 角速度改变量 Δω = τ_impulse / I
+          const angularVelocityChange =
+            torqueImpulseVector.divideScalar(BALL_INERTIA);
+
+          this.angularVelocity.add(angularVelocityChange);
+        }
+      }
+
+      if (Math.abs(this.velocity.y) < MIN_Y_VELOCITY_FOR_STABLE_CONTACT) {
+        this.velocity.y = 0; // 假设在稳定接触后，垂直速度近似为0 (避免微小反弹)
+
+        const planarVelocity = new THREE.Vector3(
+          this.velocity.x,
+          0,
+          this.velocity.z
+        );
+        const planarSpeed = planarVelocity.length();
+
+        // 计算地面接触点相对于球心的速度 (v_contact = v_planar + ω × r_contact)
+        // r_contact 是从球心指向地面接触点的向量: (0, -BALL_RADIUS, 0)
+        const r_contact = new THREE.Vector3(0, -SIZES.BALL_RADIUS, 0);
+        const rotationalVelocityAtContact = new THREE.Vector3().crossVectors(
+          this.angularVelocity,
+          r_contact
+        );
+        const contactPointVelocity = new THREE.Vector3().addVectors(
+          planarVelocity,
+          rotationalVelocityAtContact
+        );
+        const contactPointSpeed = contactPointVelocity.length();
+
+        if (contactPointSpeed > ALMOST_ZERO_SPEED) {
+          // 只有当接触点有相对滑动时才有滑动摩擦力
           // 动摩擦力 F_friction = μ * N (N是正向力，这里约等于mg)
-          // 方向与平面速度相反
-          const frictionMagnitude =
-            PHYSICS.GROUND_FRICTION_FACTOR * Math.abs(PHYSICS.GRAVITY.y); // μ * g
-          const frictionImpulseMagnitude = frictionMagnitude * deltaTime;
+          // 方向与接触点滑动速度相反
+          const N = SIZES.BALL_MASS * Math.abs(PHYSICS.GRAVITY.y); // 正向力
+          const frictionMagnitude = PHYSICS.GROUND_FRICTION_FACTOR * N; // 滑动摩擦力大小 μ * N
 
-          if (Math.sqrt(planarSpeedSq) > frictionImpulseMagnitude / 1.0) {
-            // 1.0是球的质量，假设为1
-            // 施加摩擦力，减少平面速度
-            planarVelocity
-              .normalize()
-              .multiplyScalar(-frictionImpulseMagnitude);
-            this.velocity.x += planarVelocity.x;
-            this.velocity.z += planarVelocity.z;
+          const frictionDirection = contactPointVelocity
+            .clone()
+            .normalize()
+            .multiplyScalar(-1);
+          const frictionForceVector = frictionDirection
+            .clone()
+            .multiplyScalar(frictionMagnitude);
+
+          // 1. 摩擦力对线速度的影响 (改变球心的平动)
+          const linearAcceleration = frictionForceVector
+            .clone()
+            .divideScalar(SIZES.BALL_MASS); // a = F/m
+          const linearVelocityChange = linearAcceleration
+            .clone()
+            .multiplyScalar(deltaTime); // Δv = a * Δt
+
+          // 检查摩擦力是否足以使接触点滑动停止 (或者说，使球达到纯滚动或完全停止)
+          // 这是一个简化：如果摩擦力产生的速度变化大于当前滑动速度，则认为滑动停止
+          if (contactPointSpeed > linearVelocityChange.length()) {
+            // 这里用 linearVelocityChange.length() 作为比较基准不够精确，但作为简化
+            this.velocity.x += linearVelocityChange.x;
+            this.velocity.z += linearVelocityChange.z;
           } else {
-            // 摩擦力足以使球停止在平面上的运动
-            this.velocity.x = 0;
-            this.velocity.z = 0;
-            if (this.angularVelocity) {
-              // 如果球停止了，它的旋转也应该因为摩擦逐渐停止
-              this.angularVelocity.multiplyScalar(
-                1 - PHYSICS.GROUND_FRICTION_FACTOR * 5 * deltaTime
-              ); // 旋转衰减
+            const targetPlanarVelForPureRolling = new THREE.Vector3()
+              .crossVectors(this.angularVelocity, r_contact)
+              .multiplyScalar(-1);
+            targetPlanarVelForPureRolling.y = 0; //确保是平面速度
+            this.velocity.x = targetPlanarVelForPureRolling.x; // (或者用 lerp 平滑过渡)
+            this.velocity.z = targetPlanarVelForPureRolling.z;
+            // 如果角速度也很小，就让它们都停下来
+            if (
+              this.angularVelocity.length() < ALMOST_ZERO_SPEED &&
+              planarSpeed < ALMOST_ZERO_SPEED
+            ) {
+              this.velocity.x = 0;
+              this.velocity.z = 0;
+              this.angularVelocity.set(0, 0, 0);
             }
           }
+
+          // 2. 摩擦力对角速度的影响 (改变球的转动)
+          // 力矩 τ = r_contact × F_friction
+          const torqueVector = new THREE.Vector3().crossVectors(
+            r_contact,
+            frictionForceVector
+          );
+          const angularAcceleration = torqueVector
+            .clone()
+            .divideScalar(BALL_INERTIA); // α = τ / I
+          const angularVelocityChange = angularAcceleration
+            .clone()
+            .multiplyScalar(deltaTime); // Δω = α * Δt
+
+          this.angularVelocity.add(angularVelocityChange);
+        } else {
+          // 接触点几乎没有相对滑动 (球在纯滚动或已停止)
+          // 如果是纯滚动，理论上只有滚动摩擦力 (通常远小于滑动摩擦力)
+          // 为了简化，我们可以假设此时球的线性减速和角速度减速是由于一个等效的滚动阻力
+          if (planarSpeed > ALMOST_ZERO_SPEED) {
+            const ROLLING_RESISTANCE_FACTOR =
+              PHYSICS.GROUND_FRICTION_FACTOR * 0.1; // 滚动阻力系数远小于滑动摩擦系数
+            const rollingResistanceForceMag =
+              ROLLING_RESISTANCE_FACTOR *
+              SIZES.BALL_MASS *
+              Math.abs(PHYSICS.GRAVITY.y);
+            const rollingResistanceLinAccel =
+              rollingResistanceForceMag / SIZES.BALL_MASS;
+            const rollingLinVelChange = planarVelocity
+              .clone()
+              .normalize()
+              .multiplyScalar(-rollingResistanceLinAccel * deltaTime);
+            if (planarSpeed > rollingLinVelChange.length()) {
+              this.velocity.x += rollingLinVelChange.x;
+              this.velocity.z += rollingLinVelChange.z;
+            } else {
+              this.velocity.x = 0;
+              this.velocity.z = 0;
+            }
+          }
+
+          // 角速度也因为滚动阻力而衰减 (试图维持 v = ωr)
+          // 当线速度减小时，角速度也应相应减小以保持纯滚动（或一起停止）
+          if (this.angularVelocity.length() > ALMOST_ZERO_SPEED) {
+            // 一个简单的衰减，也可以基于线速度的衰减来计算角速度的衰减
+            this.angularVelocity.multiplyScalar(
+              1.0 - PHYSICS.GROUND_SPIN_DECAY_RATE * deltaTime
+            );
+            // 尝试让角速度与线速度匹配纯滚动条件
+            if (
+              planarSpeed < ALMOST_ZERO_SPEED &&
+              this.angularVelocity.length() > ALMOST_ZERO_SPEED * 2
+            ) {
+              // 线速度停了但还在转
+              this.angularVelocity.multiplyScalar(0.5); // 加速停止
+            }
+          }
+        }
+
+        // 如果球几乎完全停止了
+        if (
+          this.velocity.lengthSq() < ALMOST_ZERO_SPEED * ALMOST_ZERO_SPEED &&
+          this.angularVelocity.lengthSq() <
+            ALMOST_ZERO_SPEED * ALMOST_ZERO_SPEED
+        ) {
+          this.velocity.set(0, 0, 0);
+          this.angularVelocity.set(0, 0, 0);
         }
       }
     }
